@@ -1,32 +1,59 @@
 #include "dualdesk/core/logger.h"
+#include "dualdesk/display/display_manager.h"
 #include <windows.h>
 #include <iostream>
+#include <sstream>
+#include <string>
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nCmdShow) {
-    // Allocate console window for debugging
     AllocConsole();
     FILE* fDummy;
     freopen_s(&fDummy, "CONOUT$", "w", stdout);
     freopen_s(&fDummy, "CONOUT$", "w", stderr);
-    std::cout.clear();
+
+    LOG_INFO("DualDesk starting...");
+
+    dualdesk::DisplayManager dm;
+    auto monitors = dm.EnumerateDisplays();
+
+    // Build message with stringstream and convert to string
+    std::stringstream ss;
+    ss << "Found " << monitors.size() << " monitors";
+    LOG_INFO(ss.str());
     
-    LOG_INFO("DualDesk v0.1.0 starting...");
-    LOG_DEBUG("Debug message - this should appear");
-    LOG_WARN("Warning: This is a test warning");
+    for (size_t i = 0; i < monitors.size(); ++i) {
+        std::stringstream msg;
+        msg << "Monitor " << (i+1) << ": " 
+            << monitors[i].Width() << "x" << monitors[i].Height();
+        LOG_INFO(msg.str());
+    }
+
+    // Build message for MessageBox
+    std::string message = "DualDesk is running!\n\nDetected ";
+    message += std::to_string(monitors.size());
+    message += " monitor(s):\n";
     
-    MessageBoxA(NULL, "DualDesk is running!\nCheck the console for logs.", 
-                "DualDesk", MB_OK | MB_ICONINFORMATION);
-    
+    for (size_t i = 0; i < monitors.size(); ++i) {
+        message += "  Monitor ";
+        message += std::to_string(i + 1);
+        message += ": ";
+        message += std::to_string(monitors[i].Width());
+        message += "x";
+        message += std::to_string(monitors[i].Height());
+        if (monitors[i].isPrimary) {
+            message += " (Primary)";
+        }
+        message += "\n";
+    }
+
+    MessageBoxA(NULL, message.c_str(), "DualDesk Monitor Info", MB_OK | MB_ICONINFORMATION);
+
     LOG_INFO("DualDesk exiting...");
-    
-    // KEEP CONSOLE OPEN - press any key to close
     system("pause");
-    
-    // Cleanup
+
     fclose(stdout);
     fclose(stderr);
     FreeConsole();
-    
     return 0;
 }
