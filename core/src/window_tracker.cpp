@@ -5,6 +5,17 @@
 
 namespace dualdesk {
 
+// Helper to convert wstring to string
+std::string WStringToString(const std::wstring& wstr) {
+    if (wstr.empty()) return std::string();
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), 
+                                          NULL, 0, NULL, NULL);
+    std::string strTo(size_needed, 0);
+    WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), 
+                        &strTo[0], size_needed, NULL, NULL);
+    return strTo;
+}
+
 WindowTracker::WindowTracker() {
     LOG_DEBUG("WindowTracker created");
 }
@@ -16,6 +27,11 @@ WindowTracker::~WindowTracker() {
 std::vector<WindowInfo> WindowTracker::GetAllWindows() {
     windows_.clear();
     EnumWindows(EnumWindowsProc, (LPARAM)this);
+    
+    // Fixed: Use string concatenation instead of formatting
+    std::string msg = "Found " + std::to_string(windows_.size()) + " trackable windows";
+    LOG_INFO(msg);
+    
     return windows_;
 }
 
@@ -95,7 +111,7 @@ std::vector<WindowInfo> WindowTracker::GetWindowsOnMonitor(HMONITOR monitor) {
     LOG_INFO(msg);
     
     for (const auto& window : result) {
-        std::string titleStr(window.title.begin(), window.title.end());
+        std::string titleStr = WStringToString(window.title);
         LOG_INFO("  - " + titleStr);
     }
     

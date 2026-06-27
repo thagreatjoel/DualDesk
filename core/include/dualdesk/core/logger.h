@@ -3,6 +3,7 @@
 #include <string>
 #include <iostream>
 #include <windows.h>
+#include <sstream>
 
 namespace dualdesk {
 
@@ -31,6 +32,15 @@ public:
         std::string fullMessage = prefix + " " + message + "\n";
         std::cout << fullMessage;
         OutputDebugStringA(fullMessage.c_str());
+    }
+    
+    // Template version for formatted messages
+    template<typename... Args>
+    static void LogFormatted(LogLevel level, const std::string& format, Args&&... args) {
+        // Simple string concatenation for now
+        std::string message = format;
+        // We'll expand this later
+        Log(level, message);
     }
     
     static void Trace(const std::string& msg) { Log(LogLevel::Trace, msg); }
