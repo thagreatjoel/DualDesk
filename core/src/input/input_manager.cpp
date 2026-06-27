@@ -5,6 +5,8 @@
 #include <setupapi.h>
 #include <devguid.h>
 #include <string>
+#include <unordered_map>
+#include <set>
 
 #pragma comment(lib, "hid.lib")
 #pragma comment(lib, "setupapi.lib")
@@ -12,7 +14,7 @@
 namespace dualdesk {
 
 InputManager::InputManager() {
-    LOG_DEBUG("InputManager created");
+    lastDeviceCheckTime_ = GetTickCount();
 }
 
 InputManager::~InputManager() {
@@ -35,7 +37,18 @@ bool InputManager::Initialize(HWND hwnd) {
     EnumerateRawInputDevices();
     initialized_ = true;
     
-    LOG_INFO("InputManager initialized with {} devices", devices_.size());
+    std::string msg = "InputManager initialized with " + std::to_string(devices_.size()) + " devices";
+    LOG_INFO(msg);
+    
+    // Log keyboard and mouse counts
+    int kbCount = 0, mouseCount = 0;
+    for (const auto& pair : devices_) {
+        if (pair.second.type == InputDeviceType::Keyboard) kbCount++;
+        else if (pair.second.type == InputDeviceType::Mouse) mouseCount++;
+    }
+    LOG_INFO("Keyboards: " + std::to_string(kbCount));
+    LOG_INFO("Mice: " + std::to_string(mouseCount));
+    
     return true;
 }
 
@@ -49,28 +62,28 @@ void InputManager::Shutdown() {
 }
 
 bool InputManager::RegisterForRawInput(HWND hwnd) {
-    // Register for keyboard input
-    RAWINPUTDEVICE ridKeyboard;
-    ridKeyboard.usUsagePage = 0x01;  // Generic Desktop
-    ridKeyboard.usUsage = 0x06;      // Keyboard
+    LOG_INFO("RegisterForRawInput called");
+    
+    RAWINPUTDEVICE ridKeyboard = {0};
+    ridKeyboard.usUsagePage = 0x01;
+    ridKeyboard.usUsage = 0x06;
     ridKeyboard.dwFlags = RIDEV_INPUTSINK;
     ridKeyboard.hwndTarget = hwnd;
     
-    // Register for mouse input
-    RAWINPUTDEVICE ridMouse;
-    ridMouse.usUsagePage = 0x01;     // Generic Desktop
-    ridMouse.usUsage = 0x02;         // Mouse
+    RAWINPUTDEVICE ridMouse = {0};
+    ridMouse.usUsagePage = 0x01;
+    ridMouse.usUsage = 0x02;
     ridMouse.dwFlags = RIDEV_INPUTSINK;
     ridMouse.hwndTarget = hwnd;
     
     RAWINPUTDEVICE devices[] = {ridKeyboard, ridMouse};
     
     if (!RegisterRawInputDevices(devices, 2, sizeof(RAWINPUTDEVICE))) {
-        LOG_ERROR("Failed to register raw input devices. Error: {}", GetLastError());
+        LOG_ERROR("Failed to register raw input devices");
         return false;
     }
     
-    LOG_INFO("Registered for raw input");
+    LOG_INFO("RAW INPUT REGISTERED SUCCESSFULLY!");
     return true;
 }
 
@@ -78,11 +91,9 @@ void InputManager::UnregisterRawInput() {
     RAWINPUTDEVICE rid = {0};
     rid.dwFlags = RIDEV_REMOVE;
     RegisterRawInputDevices(&rid, 1, sizeof(RAWINPUTDEVICE));
-    LOG_DEBUG("Unregistered raw input");
 }
 
 void InputManager::EnumerateRawInputDevices() {
-    // Get number of devices
     UINT deviceCount = 0;
     if (GetRawInputDeviceList(nullptr, &deviceCount, sizeof(RAWINPUTDEVICELIST)) != 0) {
         LOG_ERROR("Failed to get raw input device count");
@@ -94,54 +105,78 @@ void InputManager::EnumerateRawInputDevices() {
         return;
     }
     
-    // Get device list
     std::vector<RAWINPUTDEVICELIST> deviceList(deviceCount);
     if (GetRawInputDeviceList(deviceList.data(), &deviceCount, sizeof(RAWINPUTDEVICELIST)) == (UINT)-1) {
         LOG_ERROR("Failed to get raw input device list");
         return;
     }
     
-    LOG_INFO("Found {} raw input devices", deviceCount);
+    LOG_INFO("Found " + std::to_string(deviceCount) + " raw input devices");
     
-    // Group devices by parent
-    std::unordered_map<std::wstring, std::vector<RAWINPUTDEVICELIST>> deviceGroups;
+    // Clear and rebuild device map
+    devices_.clear();
     
     for (const auto& device : deviceList) {
         InputDevice info;
         info.id = GenerateDeviceId();
         info.deviceHandle = device.hDevice;
-        info.deviceName = GetDeviceName(device.hDevice);
         info.type = GetDeviceType(device.hDevice);
         info.state = InputDeviceState::Connected;
         
-        // Try to get a friendly name
-        std::wstring friendlyName = info.deviceName;
+        // Get device name
+        std::wstring devicePath = GetDeviceName(device.hDevice);
+        info.deviceName = devicePath;
         
-        // Extract device type from path
-        if (info.deviceName.find(L"ELAN07FB") != std::wstring::npos) {
-            friendlyName = L"Touchpad";
-        } else if (info.deviceName.find(L"HPQ8001") != std::wstring::npos) {
-            friendlyName = L"Keyboard";
-        } else if (info.deviceName.find(L"VID_3151") != std::wstring::npos) {
-            friendlyName = L"External Mouse";
-        } else if (info.deviceName.find(L"USB") != std::wstring::npos) {
-            friendlyName = L"USB Device";
+        // Skip unknown devices
+        if (info.type == InputDeviceType::Unknown) {
+            continue;
         }
         
-        // Add friendly name to device
+        // Try to get a friendly name based on device path
+        std::wstring friendlyName;
+        if (devicePath.find(L"ELAN07FB") != std::wstring::npos) {
+            friendlyName = L"Touchpad";
+        } else if (devicePath.find(L"HPQ8001") != std::wstring::npos) {
+            friendlyName = L"Keyboard";
+        } else if (devicePath.find(L"VID_3151") != std::wstring::npos) {
+            friendlyName = L"External Mouse";
+        } else if (devicePath.find(L"VID_03F0") != std::wstring::npos) {
+            if (devicePath.find(L"MI_00") != std::wstring::npos) {
+                friendlyName = L"Keyboard";
+            } else {
+                friendlyName = L"Mouse";
+            }
+        } else if (devicePath.find(L"USB") != std::wstring::npos) {
+            friendlyName = L"USB Device";
+        } else {
+            // Keep the original name but shorten it
+            size_t lastSlash = devicePath.find_last_of(L'#');
+            if (lastSlash != std::wstring::npos) {
+                friendlyName = devicePath.substr(lastSlash + 1);
+                if (friendlyName.length() > 20) {
+                    friendlyName = friendlyName.substr(0, 20) + L"...";
+                }
+            } else {
+                friendlyName = L"HID Device";
+            }
+        }
+        
         info.deviceName = friendlyName;
         
+        // Store the device
         devices_[info.id] = info;
         
-        std::string name(info.deviceName.begin(), info.deviceName.end());
+        std::string name(friendlyName.begin(), friendlyName.end());
         std::string typeStr;
         switch(info.type) {
             case InputDeviceType::Keyboard: typeStr = "Keyboard"; break;
             case InputDeviceType::Mouse: typeStr = "Mouse"; break;
             default: typeStr = "Unknown"; break;
         }
-        LOG_INFO("  - {} ({})", name, typeStr);
+        LOG_INFO("  - " + name + " (" + typeStr + ")");
     }
+    
+    LOG_INFO("Total devices stored: " + std::to_string(devices_.size()));
 }
 
 std::wstring InputManager::GetDeviceName(HANDLE handle) {
@@ -216,44 +251,17 @@ InputDevice InputManager::GetDevice(DeviceId id) const {
     return InputDevice{};
 }
 
-std::vector<InputManager::PhysicalDevice> InputManager::GetPhysicalDevices() const {
-    std::unordered_map<std::wstring, PhysicalDevice> physicalDevices;
-    
-    for (const auto& pair : devices_) {
-        const auto& device = pair.second;
-        std::wstring baseName = device.deviceName;
-        
-        // Remove interface suffixes (Col01, Col02, etc.)
-        size_t colPos = baseName.find(L"Col");
-        if (colPos != std::wstring::npos) {
-            baseName = baseName.substr(0, colPos - 1);
-        }
-        
-        // Remove trailing numbers
-        while (!baseName.empty() && iswdigit(baseName.back())) {
-            baseName.pop_back();
-        }
-        
-        if (physicalDevices.find(baseName) == physicalDevices.end()) {
-            PhysicalDevice phys;
-            phys.name = baseName;
-            phys.type = device.type;
-            physicalDevices[baseName] = phys;
-        }
-        
-        physicalDevices[baseName].interfaces.push_back(device.id);
-    }
-    
-    std::vector<PhysicalDevice> result;
-    for (auto& pair : physicalDevices) {
-        result.push_back(pair.second);
-    }
-    
-    return result;
-}
-
 void InputManager::SetInputEventCallback(InputEventCallback callback) {
     eventCallback_ = callback;
+}
+
+void InputManager::SetDeviceChangeCallback(DeviceChangeCallback callback) {
+    deviceChangeCallback_ = callback;
+}
+
+void InputManager::RefreshDevices() {
+    LOG_INFO("Refreshing input devices...");
+    EnumerateRawInputDevices();
 }
 
 void InputManager::ProcessRawInput(HRAWINPUT handle) {
@@ -261,6 +269,8 @@ void InputManager::ProcessRawInput(HRAWINPUT handle) {
     if (GetRawInputData(handle, RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER)) != 0) {
         return;
     }
+    
+    if (size == 0) return;
     
     std::vector<BYTE> buffer(size);
     if (GetRawInputData(handle, RID_INPUT, buffer.data(), &size, sizeof(RAWINPUTHEADER)) != size) {
@@ -302,7 +312,6 @@ InputEvent InputManager::ParseKeyboardInput(HRAWINPUT handle) {
     event.scanCode = keyboard.MakeCode;
     event.isExtended = (keyboard.Flags & RI_KEY_E0) != 0;
     
-    // Try to find the device
     for (const auto& pair : devices_) {
         if (pair.second.deviceHandle == rawInput->header.hDevice) {
             event.deviceId = pair.first;
@@ -328,8 +337,8 @@ InputEvent InputManager::ParseMouseInput(HRAWINPUT handle) {
     event.mouseDelta.x = mouse.lLastX;
     event.mouseDelta.y = mouse.lLastY;
     event.mouseButtons = mouse.ulButtons;
+    event.type = InputEventType::Unknown;
     
-    // Try to find the device
     for (const auto& pair : devices_) {
         if (pair.second.deviceHandle == rawInput->header.hDevice) {
             event.deviceId = pair.first;
@@ -343,8 +352,22 @@ InputEvent InputManager::ParseMouseInput(HRAWINPUT handle) {
     
     if (mouse.ulButtons & RI_MOUSE_LEFT_BUTTON_DOWN) {
         event.type = InputEventType::MouseButtonDown;
+        event.mouseButtons = MK_LBUTTON;
     } else if (mouse.ulButtons & RI_MOUSE_LEFT_BUTTON_UP) {
         event.type = InputEventType::MouseButtonUp;
+        event.mouseButtons = MK_LBUTTON;
+    } else if (mouse.ulButtons & RI_MOUSE_RIGHT_BUTTON_DOWN) {
+        event.type = InputEventType::MouseButtonDown;
+        event.mouseButtons = MK_RBUTTON;
+    } else if (mouse.ulButtons & RI_MOUSE_RIGHT_BUTTON_UP) {
+        event.type = InputEventType::MouseButtonUp;
+        event.mouseButtons = MK_RBUTTON;
+    } else if (mouse.ulButtons & RI_MOUSE_MIDDLE_BUTTON_DOWN) {
+        event.type = InputEventType::MouseButtonDown;
+        event.mouseButtons = MK_MBUTTON;
+    } else if (mouse.ulButtons & RI_MOUSE_MIDDLE_BUTTON_UP) {
+        event.type = InputEventType::MouseButtonUp;
+        event.mouseButtons = MK_MBUTTON;
     }
     
     if (mouse.ulButtons & RI_MOUSE_WHEEL) {
@@ -353,6 +376,18 @@ InputEvent InputManager::ParseMouseInput(HRAWINPUT handle) {
     }
     
     return event;
+}
+
+void InputManager::CheckForDeviceChanges() {
+    DWORD now = GetTickCount();
+    DWORD elapsed = now - lastDeviceCheckTime_;
+    
+    if (elapsed < DEVICE_CHECK_INTERVAL_MS) {
+        return;
+    }
+    
+    lastDeviceCheckTime_ = now;
+    EnumerateRawInputDevices();
 }
 
 } // namespace dualdesk

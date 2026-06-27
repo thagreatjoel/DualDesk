@@ -5,7 +5,6 @@ namespace dualdesk {
 
 std::string InputEvent::ToString() const {
     std::stringstream ss;
-    ss << "Event: ";
     
     switch(type) {
         case InputEventType::KeyDown: ss << "KeyDown"; break;
@@ -23,11 +22,14 @@ std::string InputEvent::ToString() const {
         ss << " Key: 0x" << std::hex << keyCode;
     }
     
-    if (type == InputEventType::MouseMove) {
-        ss << " Pos: (" << mousePosition.x << ", " << mousePosition.y << ")";
+    if (type == InputEventType::MouseButtonDown || type == InputEventType::MouseButtonUp) {
+        ss << " Button: " << mouseButtons;
+    }
+    
+    if (type == InputEventType::MouseWheel) {
+        ss << " Delta: " << wheelDelta;
     }
     
     return ss.str();
 }
-
 } // namespace dualdesk

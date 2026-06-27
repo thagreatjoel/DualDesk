@@ -28,7 +28,9 @@ bool WorkspaceManager::Initialize(DisplayManager* displayManager, InputManager* 
 
     CreateWorkspaces();
     initialized_ = true;
-    LOG_INFO("WorkspaceManager initialized with {} workspaces", workspaces_.size());
+    
+    std::string msg = "WorkspaceManager initialized with " + std::to_string(workspaces_.size()) + " workspaces";
+    LOG_INFO(msg);
     return true;
 }
 
@@ -40,39 +42,36 @@ void WorkspaceManager::Shutdown() {
 }
 
 void WorkspaceManager::CreateWorkspaces() {
-    // Clear existing workspaces
     workspaces_.clear();
     currentWorkspaceId_ = 0;
 
-    // Get all monitors
     auto monitors = displayManager_->EnumerateDisplays();
     
     if (monitors.empty()) {
         LOG_WARN("No monitors found, creating default workspace");
         WorkspaceId id = GenerateWorkspaceId();
         auto workspace = std::make_unique<Workspace>(id, nullptr);
+        workspace->SetName("Default Workspace");
         workspaces_[id] = std::move(workspace);
         currentWorkspaceId_ = id;
         return;
     }
 
-    // Create one workspace per monitor
     for (const auto& display : monitors) {
         WorkspaceId id = GenerateWorkspaceId();
         auto workspace = std::make_unique<Workspace>(id, display.monitor);
-        workspace->SetName("Monitor " + std::to_string(display.Width()) + "x" + 
-                          std::to_string(display.Height()));
+        std::string name = "Monitor " + std::to_string(display.Width()) + "x" + std::to_string(display.Height());
+        workspace->SetName(name);
         workspaces_[id] = std::move(workspace);
     }
 
-    // Set first workspace as active
     if (!workspaces_.empty()) {
         currentWorkspaceId_ = workspaces_.begin()->first;
         workspaces_[currentWorkspaceId_]->Activate();
-        LOG_INFO("Active workspace: {}", workspaces_[currentWorkspaceId_]->GetName());
+        std::string msg = "Active workspace: " + workspaces_[currentWorkspaceId_]->GetName();
+        LOG_INFO(msg);
     }
 
-    // Assign windows to workspaces
     AssignWindowsToWorkspaces();
 }
 
@@ -120,36 +119,34 @@ void WorkspaceManager::AssignWindowsToWorkspaces() {
     auto windows = windowTracker_.GetAllWindows();
     
     for (const auto& window : windows) {
-        // Determine which monitor this window is on
         HMONITOR monitor = MonitorFromWindow(window.handle, MONITOR_DEFAULTTONEAREST);
-        
-        // Find workspace for this monitor
         Workspace* workspace = GetWorkspaceByMonitor(monitor);
         if (workspace) {
             workspace->AddWindow(window.handle);
         }
     }
     
-    LOG_INFO("Assigned {} windows to workspaces", windows.size());
+    std::string msg = "Assigned " + std::to_string(windows.size()) + " windows to workspaces";
+    LOG_INFO(msg);
 }
 
 void WorkspaceManager::AssignWindowToWorkspace(HWND hwnd, WorkspaceId workspaceId) {
     Workspace* workspace = GetWorkspace(workspaceId);
     if (!workspace) {
-        LOG_WARN("Workspace {} not found", workspaceId);
+        std::string msg = "Workspace " + std::to_string(workspaceId) + " not found";
+        LOG_WARN(msg);
         return;
     }
 
-    // Remove from current workspace
     for (auto& pair : workspaces_) {
         if (pair.second->HasWindow(hwnd)) {
             pair.second->RemoveWindow(hwnd);
         }
     }
 
-    // Add to target workspace
     workspace->AddWindow(hwnd);
-    LOG_DEBUG("Window assigned to workspace {}", workspaceId);
+    std::string msg = "Window assigned to workspace " + std::to_string(workspaceId);
+    LOG_DEBUG(msg);
 }
 
 void WorkspaceManager::AssignWindowToMonitorWorkspace(HWND hwnd, HMONITOR monitor) {
@@ -162,13 +159,11 @@ void WorkspaceManager::AssignWindowToMonitorWorkspace(HWND hwnd, HMONITOR monito
 }
 
 void WorkspaceManager::UpdateWindowAssignment(HWND hwnd) {
-    // Check if window still exists
     if (!IsWindow(hwnd)) {
         RemoveWindowFromWorkspace(hwnd);
         return;
     }
 
-    // Get current monitor
     HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     Workspace* workspace = GetWorkspaceByMonitor(monitor);
     
@@ -177,19 +172,15 @@ void WorkspaceManager::UpdateWindowAssignment(HWND hwnd) {
         return;
     }
 
-    // Check if window is already in a workspace
     for (auto& pair : workspaces_) {
         if (pair.second->HasWindow(hwnd)) {
-            // If it's the same workspace, do nothing
             if (pair.second.get() == workspace) {
                 return;
             }
-            // Otherwise, move it
             pair.second->RemoveWindow(hwnd);
         }
     }
 
-    // Add to new workspace
     workspace->AddWindow(hwnd);
 }
 
@@ -203,36 +194,28 @@ void WorkspaceManager::RemoveWindowFromWorkspace(HWND hwnd) {
     }
 }
 
-void WorkspaceManager::TrackWindows() {
-    // Track window creation/destruction
-    // This will be expanded in Phase 8
-}
-
 bool WorkspaceManager::SwitchToWorkspace(WorkspaceId id) {
     Workspace* workspace = GetWorkspace(id);
     if (!workspace) {
-        LOG_WARN("Workspace {} not found", id);
+        std::string msg = "Workspace " + std::to_string(id) + " not found";
+        LOG_WARN(msg);
         return false;
     }
 
     WorkspaceId oldId = currentWorkspaceId_;
     
-    // Deactivate current workspace
     Workspace* oldWorkspace = GetActiveWorkspace();
     if (oldWorkspace) {
         oldWorkspace->Deactivate();
     }
 
-    // Activate new workspace
     workspace->Activate();
     currentWorkspaceId_ = id;
-
-    // Bring workspace windows to front
     workspace->BringToFront();
 
-    LOG_INFO("Switched to workspace: {}", workspace->GetName());
+    std::string msg = "Switched to workspace: " + workspace->GetName();
+    LOG_INFO(msg);
 
-    // Notify callback
     if (workspaceChangeCallback_) {
         workspaceChangeCallback_(oldId, id);
     }
@@ -282,11 +265,11 @@ bool WorkspaceManager::SwitchToPreviousWorkspace() {
 void WorkspaceManager::AssignKeyboardToWorkspace(DeviceId keyboardId, WorkspaceId workspaceId) {
     Workspace* workspace = GetWorkspace(workspaceId);
     if (!workspace) {
-        LOG_WARN("Workspace {} not found", workspaceId);
+        std::string msg = "Workspace " + std::to_string(workspaceId) + " not found";
+        LOG_WARN(msg);
         return;
     }
 
-    // Remove keyboard from current workspace
     for (auto& pair : workspaces_) {
         if (pair.second->GetKeyboardId() == keyboardId) {
             pair.second->AssignKeyboard(0);
@@ -294,17 +277,18 @@ void WorkspaceManager::AssignKeyboardToWorkspace(DeviceId keyboardId, WorkspaceI
     }
 
     workspace->AssignKeyboard(keyboardId);
-    LOG_INFO("Keyboard {} assigned to workspace {}", keyboardId, workspaceId);
+    std::string msg = "Keyboard " + std::to_string(keyboardId) + " assigned to workspace " + std::to_string(workspaceId);
+    LOG_INFO(msg);
 }
 
 void WorkspaceManager::AssignMouseToWorkspace(DeviceId mouseId, WorkspaceId workspaceId) {
     Workspace* workspace = GetWorkspace(workspaceId);
     if (!workspace) {
-        LOG_WARN("Workspace {} not found", workspaceId);
+        std::string msg = "Workspace " + std::to_string(workspaceId) + " not found";
+        LOG_WARN(msg);
         return;
     }
 
-    // Remove mouse from current workspace
     for (auto& pair : workspaces_) {
         if (pair.second->GetMouseId() == mouseId) {
             pair.second->AssignMouse(0);
@@ -312,7 +296,8 @@ void WorkspaceManager::AssignMouseToWorkspace(DeviceId mouseId, WorkspaceId work
     }
 
     workspace->AssignMouse(mouseId);
-    LOG_INFO("Mouse {} assigned to workspace {}", mouseId, workspaceId);
+    std::string msg = "Mouse " + std::to_string(mouseId) + " assigned to workspace " + std::to_string(workspaceId);
+    LOG_INFO(msg);
 }
 
 Workspace* WorkspaceManager::GetWorkspaceForDevice(DeviceId deviceId) {
@@ -330,12 +315,24 @@ void WorkspaceManager::SetWorkspaceChangeCallback(WorkspaceChangeCallback callba
 }
 
 void WorkspaceManager::Update() {
-    // Update window assignments
     auto windows = windowTracker_.GetAllWindows();
     for (const auto& window : windows) {
         UpdateWindowAssignment(window.handle);
     }
     LOG_DEBUG("WorkspaceManager updated");
+}
+
+void WorkspaceManager::TrackWindows() {
+    // Placeholder for future window tracking
+}
+
+Workspace* WorkspaceManager::FindWorkspaceForWindow(HWND hwnd) {
+    for (auto& pair : workspaces_) {
+        if (pair.second->HasWindow(hwnd)) {
+            return pair.second.get();
+        }
+    }
+    return nullptr;
 }
 
 } // namespace dualdesk
