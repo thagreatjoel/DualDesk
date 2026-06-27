@@ -3,6 +3,7 @@
 #include "dualdesk/workspace/window_tracker.h"
 #include "dualdesk/workspace/workspace_manager.h"
 #include "dualdesk/input/input_manager.h"
+#include "dualdesk/input/input_router.h"
 #include <windows.h>
 #include <iostream>
 #include <string>
@@ -143,6 +144,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         std::string name = WStringToString(mouse.deviceName);
         LOG_INFO("  - " + name);
     }
+    
+    // Test Input Routing
+    LOG_INFO("=== INPUT ROUTING TEST ===");
+    dualdesk::InputRouter inputRouter;
+    inputRouter.Initialize(&workspaceManager);
+
+    // Set up route callback
+    inputRouter.SetRouteCallback([](const dualdesk::InputEvent& event, dualdesk::Workspace* workspace) {
+        if (workspace) {
+            std::string wsName = workspace->GetName();
+            LOG_INFO("Event routed to: " + wsName);
+        }
+        return true;
+    });
+
+    LOG_INFO("InputRouter initialized and ready");
 
     // Build message for MessageBox
     std::string message = "DualDesk is running!\n\n";

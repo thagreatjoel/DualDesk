@@ -1,41 +1,53 @@
-set(CORE_SOURCES
-    src/logger.cpp
-    src/config_manager.cpp
-    src/error_handler.cpp
-    src/event_dispatcher.cpp
-    src/thread_pool.cpp
-)
+cmake_minimum_required(VERSION 3.15)
+project(DualDesk)
 
-set(CORE_HEADERS
-    include/dualddesk/core/logger.h
-    include/dualddesk/core/config_manager.h
-    include/dualddesk/core/error_handler.h
-    include/dualddesk/core/event_dispatcher.h
-    include/dualddesk/core/thread_pool.h
-    include/dualddesk/core/types.h
-)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_library(DualDeskCore STATIC ${CORE_SOURCES} ${CORE_HEADERS})
+if(WIN32)
+    add_definitions(-DWIN32_LEAN_AND_MEAN)
+    add_definitions(-DNOMINMAX)
+    add_definitions(-DUNICODE)
+    add_definitions(-D_UNICODE)
+endif()
+
+# Core library with all modules
+add_library(DualDeskCore STATIC
+    core/src/logger.cpp
+    core/src/display_manager.cpp
+    core/src/window_tracker.cpp
+    core/src/input/input_device.cpp
+    core/src/input/input_event.cpp
+    core/src/input/input_manager.cpp
+    core/src/input/raw_input_handler.cpp
+    core/src/input/input_filter.cpp
+    core/src/input/input_router.cpp
+    core/src/input/input_translator.cpp
+    core/src/input/virtual_input.cpp
+    core/src/workspace/workspace.cpp
+    core/src/workspace/workspace_manager.cpp
+)
 
 target_include_directories(DualDeskCore
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:include>
+        core/include
 )
 
 target_link_libraries(DualDeskCore
     PUBLIC
-        nlohmann_json::nlohmann_json
-        spdlog::spdlog
-        Threads::Threads
+        user32
+        kernel32
+        hid
+        setupapi
 )
 
-target_compile_definitions(DualDeskCore
-    PUBLIC
-        DUADDESK_CORE_EXPORTS
+# Main executable
+add_executable(DualDesk WIN32
+    app/src/main.cpp
 )
 
-# Set properties for MSVC
-if(MSVC)
-    target_compile_options(DualDeskCore PRIVATE /W4)
-endif()
+target_link_libraries(DualDesk
+    DualDeskCore
+    user32
+    kernel32
+)
