@@ -4,7 +4,6 @@ project(DualDesk)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Windows specific
 if(WIN32)
     add_definitions(-DWIN32_LEAN_AND_MEAN)
     add_definitions(-DNOMINMAX)
@@ -12,10 +11,11 @@ if(WIN32)
     add_definitions(-D_UNICODE)
 endif()
 
-# Core library - ADD display_manager.cpp HERE!
+# Core library
 add_library(DualDeskCore STATIC
     core/src/logger.cpp
     core/src/display_manager.cpp
+    core/src/window_tracker.cpp
 )
 
 target_include_directories(DualDeskCore

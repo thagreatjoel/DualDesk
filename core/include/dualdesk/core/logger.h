@@ -29,11 +29,7 @@ public:
         }
         
         std::string fullMessage = prefix + " " + message + "\n";
-        
-        // Output to console
         std::cout << fullMessage;
-        
-        // Output to debug output
         OutputDebugStringA(fullMessage.c_str());
     }
     
@@ -45,7 +41,6 @@ public:
     static void Critical(const std::string& msg) { Log(LogLevel::Critical, msg); }
 };
 
-// Macros
 #define LOG_TRACE(msg) ::dualdesk::Logger::Trace(msg)
 #define LOG_DEBUG(msg) ::dualdesk::Logger::Debug(msg)
 #define LOG_INFO(msg)  ::dualdesk::Logger::Info(msg)
