@@ -1,0 +1,50 @@
+; DualDesk Kernel Driver Installation File
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider=%Provider%
+DriverVer=06/27/2026,1.0.0.0
+CatalogFile=dualddesk.cat
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[SourceDisksNames]
+1 = %DiskName%,,,
+
+[SourceDisksFiles]
+dualddesk.sys = 1
+
+[Manufacturer]
+%Manufacturer% = Standard,NTx86,NTamd64
+
+[Standard.NTx86]
+%DeviceName% = DualDesk_Install, Root\DUALDESK
+
+[Standard.NTamd64]
+%DeviceName% = DualDesk_Install, Root\DUALDESK
+
+[DualDesk_Install.NT]
+CopyFiles = DualDesk_CopyFiles
+
+[DualDesk_CopyFiles]
+dualddesk.sys
+
+[DualDesk_Install.NT.Services]
+AddService = DualDesk, 0x00000002, DualDesk_Service
+
+[DualDesk_Service]
+DisplayName = %ServiceName%
+ServiceType = 1
+StartType = 2
+ErrorControl = 1
+ServiceBinary = %12%\dualddesk.sys
+
+[Strings]
+Provider = "DualDesk Team"
+Manufacturer = "DualDesk"
+DiskName = "DualDesk Driver Disk"
+DeviceName = "DualDesk Input Isolation Driver"
+ServiceName = "DualDesk Input Service"

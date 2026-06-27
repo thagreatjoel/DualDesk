@@ -2,6 +2,7 @@
 #include "dualdesk/display/display_manager.h"
 #include "dualdesk/workspace/window_tracker.h"
 #include "dualdesk/workspace/workspace_manager.h"
+#include "dualdesk/workspace/window_mover.h"
 #include "dualdesk/input/input_manager.h"
 #include "dualdesk/input/input_router.h"
 #include <windows.h>
@@ -9,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <chrono>
+#include <sstream>
 
 // Helper to convert wstring to string
 std::string WStringToString(const std::wstring& wstr) {
@@ -23,11 +25,12 @@ std::string WStringToString(const std::wstring& wstr) {
 
 // Global pointers
 dualdesk::InputManager* g_inputManager = nullptr;
+dualdesk::WindowMover* g_windowMover = nullptr;
 dualdesk::DisplayManager* g_displayManager = nullptr;
 dualdesk::WorkspaceManager* g_workspaceManager = nullptr;
 HWND g_statusWindow = nullptr;
 bool g_running = true;
-bool g_showStatusWindow = true;
+std::string g_lastEvent = "None";
 
 // Forward declarations
 LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -38,7 +41,6 @@ void UpdateStatusWindow();
 LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_CREATE:
-            // Set a timer to update every 500ms
             SetTimer(hwnd, 1, 500, NULL);
             return 0;
         case WM_TIMER:
@@ -47,56 +49,93 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
-            // Background
             RECT rect;
             GetClientRect(hwnd, &rect);
-            FillRect(hdc, &rect, (HBRUSH)(COLOR_WINDOW + 1));
             
-            // Draw text
-            std::string text = "DualDesk - Real-Time Monitor\n";
-            text += "=============================\n\n";
+            // White background
+            HBRUSH whiteBrush = CreateSolidBrush(RGB(255, 255, 255));
+            FillRect(hdc, &rect, whiteBrush);
+            DeleteObject(whiteBrush);
             
+            // Create font
+            HFONT hFont = CreateFont(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                     DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Consolas");
+            SelectObject(hdc, hFont);
+            
+            std::stringstream ss;
+            
+            // Header
+            ss << "+----------------------------------------------------+\n";
+            ss << "|                DUALDESK STATUS                     |\n";
+            ss << "+----------------------------------------------------+\n\n";
+            
+            // Monitors
             if (g_displayManager) {
                 auto monitors = g_displayManager->EnumerateDisplays();
-                text += "Monitors: " + std::to_string(monitors.size()) + "\n";
+                ss << "MONITORS: " << monitors.size() << "\n";
                 for (size_t i = 0; i < monitors.size(); ++i) {
-                    text += "  Monitor " + std::to_string(i+1) + ": ";
-                    text += std::to_string(monitors[i].Width()) + "x";
-                    text += std::to_string(monitors[i].Height());
-                    if (monitors[i].isPrimary) text += " (Primary)";
-                    text += "\n";
+                    ss << "   " << (i+1) << ". ";
+                    ss << monitors[i].Width() << "x" << monitors[i].Height();
+                    if (monitors[i].isPrimary) ss << " (Primary)";
+                    ss << "\n";
                 }
             }
-            text += "\n";
+            ss << "\n";
             
+            // Workspaces
+            if (g_workspaceManager) {
+                auto workspaces = g_workspaceManager->GetAllWorkspaces();
+                ss << "WORKSPACES: " << workspaces.size() << "\n";
+                for (auto* ws : workspaces) {
+                    ss << "   - " << ws->GetName() << ": ";
+                    ss << ws->GetWindowCount() << " windows\n";
+                }
+            }
+            ss << "\n";
+            
+            // Input Devices
             if (g_inputManager) {
                 auto keyboards = g_inputManager->GetKeyboards();
                 auto mice = g_inputManager->GetMice();
-                text += "Keyboards: " + std::to_string(keyboards.size()) + "\n";
+                ss << "KEYBOARDS: " << keyboards.size() << "\n";
                 for (const auto& kb : keyboards) {
-                    text += "  - " + WStringToString(kb.deviceName) + "\n";
+                    ss << "   - " << WStringToString(kb.deviceName) << "\n";
                 }
-                text += "\n";
-                text += "Mice: " + std::to_string(mice.size()) + "\n";
+                ss << "\n";
+                ss << "MICE: " << mice.size() << "\n";
                 for (const auto& mouse : mice) {
-                    text += "  - " + WStringToString(mouse.deviceName) + "\n";
+                    ss << "   - " << WStringToString(mouse.deviceName) << "\n";
                 }
             }
+            ss << "\n";
             
-            text += "\nPress ESC to exit";
+            // Last Event
+            ss << "LAST EVENT: " << g_lastEvent << "\n\n";
             
-            // Draw text in window
+            // Help
+            ss << "----------------------------------------------------\n";
+            ss << "  Win+Shift+Left   -> Move window left\n";
+            ss << "  Win+Shift+Right  -> Move window right\n";
+            ss << "  ESC              -> Exit\n";
+            
+            std::string text = ss.str();
+            
+            // Draw text
             RECT textRect = rect;
-            textRect.left += 10;
-            textRect.top += 10;
-            DrawTextA(hdc, text.c_str(), -1, &textRect, DT_LEFT);
+            textRect.left += 15;
+            textRect.top += 15;
+            textRect.right -= 15;
+            textRect.bottom -= 15;
             
+            DrawTextA(hdc, text.c_str(), -1, &textRect, DT_LEFT | DT_TOP | DT_EXPANDTABS);
+            
+            DeleteObject(hFont);
             EndPaint(hwnd, &ps);
             return 0;
         }
         case WM_DESTROY:
             KillTimer(hwnd, 1);
-            g_showStatusWindow = false;
             PostQuitMessage(0);
             return 0;
         case WM_KEYDOWN:
@@ -129,6 +168,36 @@ LRESULT CALLBACK InputWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
+        case WM_KEYDOWN:
+            if (wParam == VK_ESCAPE) {
+                g_running = false;
+                PostQuitMessage(0);
+                return 0;
+            }
+            // Win+Shift+Left/Right for window movement
+            if ((GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000)) {
+                if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
+                    if (wParam == VK_RIGHT) {
+                        HWND activeWindow = GetForegroundWindow();
+                        if (activeWindow && g_windowMover) {
+                            g_windowMover->MoveWindowToNextMonitor(activeWindow);
+                            g_lastEvent = "Window moved right";
+                            UpdateStatusWindow();
+                        }
+                        return 0;
+                    }
+                    if (wParam == VK_LEFT) {
+                        HWND activeWindow = GetForegroundWindow();
+                        if (activeWindow && g_windowMover) {
+                            g_windowMover->MoveWindowToPreviousMonitor(activeWindow);
+                            g_lastEvent = "Window moved left";
+                            UpdateStatusWindow();
+                        }
+                        return 0;
+                    }
+                }
+            }
+            break;
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
@@ -136,16 +205,7 @@ LRESULT CALLBACK InputWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 // ==================== MAIN ====================
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nCmdShow) {
-    // Create console
-    AllocConsole();
-    AttachConsole(ATTACH_PARENT_PROCESS);
-    FILE* stream;
-    freopen_s(&stream, "CONOUT$", "w", stdout);
-    freopen_s(&stream, "CONOUT$", "w", stderr);
-    setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IONBF, 0);
-    std::cout.clear();
-
+    
     LOG_INFO("DualDesk starting...");
 
     // ==================== CREATE INPUT WINDOW ====================
@@ -157,7 +217,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     wcInput.hCursor = LoadCursor(NULL, IDC_ARROW);
 
     if (!RegisterClassEx(&wcInput)) {
-        LOG_ERROR("Failed to register input window class");
+        MessageBoxA(NULL, "Failed to register input window class", "Error", MB_OK);
         return 1;
     }
 
@@ -171,11 +231,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     );
 
     if (!hwndInput) {
-        LOG_ERROR("Failed to create input window");
+        MessageBoxA(NULL, "Failed to create input window", "Error", MB_OK);
         return 1;
     }
 
-    LOG_INFO("Input window created");
     ShowWindow(hwndInput, SW_HIDE);
 
     // ==================== INITIALIZE MANAGERS ====================
@@ -202,12 +261,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         }
         
         if (added) {
-            LOG_INFO("🔌 DEVICE PLUGGED IN: " + name + " (" + typeStr + ")");
+            g_lastEvent = "PLUGGED IN: " + name + " (" + typeStr + ")";
         } else {
-            LOG_INFO("🔌 DEVICE UNPLUGGED: " + name + " (" + typeStr + ")");
+            g_lastEvent = "UNPLUGGED: " + name + " (" + typeStr + ")";
         }
-        
-        // Update the status window
         UpdateStatusWindow();
     });
 
@@ -217,8 +274,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             event.type == dualdesk::InputEventType::MouseButtonDown ||
             event.type == dualdesk::InputEventType::MouseButtonUp ||
             event.type == dualdesk::InputEventType::MouseWheel) {
-            LOG_INFO("EVENT: " + event.ToString());
+            g_lastEvent = event.ToString();
+            UpdateStatusWindow();
         }
+    });
+
+    // ==================== WINDOW MOVEMENT ====================
+    dualdesk::WindowMover windowMover;
+    windowMover.Initialize(&workspaceManager);
+    g_windowMover = &windowMover;
+    
+    windowMover.SetMoveCallback([](HWND hwnd, HMONITOR from, HMONITOR to) {
+        g_lastEvent = "Window moved between monitors";
+        UpdateStatusWindow();
     });
 
     // ==================== CREATE STATUS WINDOW ====================
@@ -231,13 +299,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     wcStatus.hCursor = LoadCursor(NULL, IDC_ARROW);
 
     if (!RegisterClassEx(&wcStatus)) {
-        LOG_ERROR("Failed to register status window class");
+        MessageBoxA(NULL, "Failed to register status window class", "Error", MB_OK);
         return 1;
     }
 
-    // Calculate window size
-    int windowWidth = 450;
-    int windowHeight = 400;
+    int windowWidth = 550;
+    int windowHeight = 600;
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
     int x = (screenWidth - windowWidth) / 2;
@@ -246,30 +313,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     g_statusWindow = CreateWindowEx(
         WS_EX_TOPMOST,
         L"DualDeskStatusWindow",
-        L"DualDesk - Real-Time Monitor",
-        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        L"DualDesk - Status Monitor",
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
         x, y, windowWidth, windowHeight,
         NULL, NULL, hInstance, NULL
     );
 
     if (!g_statusWindow) {
-        LOG_ERROR("Failed to create status window");
+        MessageBoxA(NULL, "Failed to create status window", "Error", MB_OK);
         return 1;
     }
 
-    LOG_INFO("Status window created");
     ShowWindow(g_statusWindow, SW_SHOW);
     UpdateWindow(g_statusWindow);
+    UpdateStatusWindow();
 
-    // ==================== SHOW INITIAL STATUS ====================
-    LOG_INFO("========================================");
-    LOG_INFO("DUALDESK IS RUNNING");
-    LOG_INFO("Real-time status window is open");
-    LOG_INFO("Plug/unplug devices to see updates");
-    LOG_INFO("Press ESC in status window to exit");
-    LOG_INFO("========================================");
-
-    // Update status window immediately
+    // Show startup message
+    g_lastEvent = "DualDesk started";
     UpdateStatusWindow();
 
     // ==================== MAIN MESSAGE LOOP ====================
@@ -280,7 +340,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         TranslateMessage(&msg);
         DispatchMessage(&msg);
         
-        // Check for device changes
         DWORD now = GetTickCount();
         if (now - lastCheckTime >= 500) {
             lastCheckTime = now;
@@ -288,14 +347,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         }
     }
 
-    LOG_INFO("DualDesk exiting...");
-    
-    // Cleanup
     if (g_statusWindow) {
         DestroyWindow(g_statusWindow);
         g_statusWindow = nullptr;
     }
     
-    FreeConsole();
     return 0;
 }
