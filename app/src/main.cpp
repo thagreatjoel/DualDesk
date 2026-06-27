@@ -1,6 +1,7 @@
 #include "dualdesk/core/logger.h"
 #include "dualdesk/display/display_manager.h"
 #include "dualdesk/workspace/window_tracker.h"
+#include "dualdesk/workspace/workspace_manager.h"
 #include "dualdesk/input/input_manager.h"
 #include <windows.h>
 #include <iostream>
@@ -84,7 +85,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         }
     });
 
-    // Detect monitors
+    // Initialize DisplayManager
     dualdesk::DisplayManager dm;
     auto monitors = dm.EnumerateDisplays();
     
@@ -98,19 +99,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         LOG_INFO(msg);
     }
 
-    // Track windows
-    dualdesk::WindowTracker tracker;
-    auto windows = tracker.GetAllWindows();
-    std::string windowMsg = "Found " + std::to_string(windows.size()) + " trackable windows";
-    LOG_INFO(windowMsg);
+    // Initialize WorkspaceManager
+    dualdesk::WorkspaceManager workspaceManager;
+    workspaceManager.Initialize(&dm, &inputManager);
 
-    // Show windows per monitor
-    for (size_t i = 0; i < monitors.size(); ++i) {
-        std::string msg = "Monitor " + std::to_string(i+1) + " windows:";
+    // Track windows
+    auto workspaces = workspaceManager.GetAllWorkspaces();
+    std::string wsMsg = "Created " + std::to_string(workspaces.size()) + " workspaces";
+    LOG_INFO(wsMsg);
+
+    for (auto* workspace : workspaces) {
+        std::string wsName = workspace->GetName();
+        std::string wsWindows = std::to_string(workspace->GetWindowCount());
+        LOG_INFO("  - " + wsName + ": " + wsWindows + " windows");
+    }
+
+    // Show windows per workspace
+    for (auto* workspace : workspaces) {
+        std::string msg = workspace->GetName() + " windows:";
         LOG_INFO(msg);
         
-        auto windowsOnMonitor = tracker.GetWindowsOnMonitor(monitors[i].monitor);
-        for (const auto& window : windowsOnMonitor) {
+        auto windows = workspace->GetWindows();
+        for (const auto& window : windows) {
             std::string title = WStringToString(window.title);
             LOG_INFO("  - " + title);
         }
@@ -145,11 +155,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         message += "\n";
     }
     
+    message += "\nWorkspaces: " + std::to_string(workspaces.size()) + "\n";
+    
     message += "\nInput Devices:\n";
     message += "  Keyboards: " + std::to_string(keyboards.size()) + "\n";
     message += "  Mice: " + std::to_string(mice.size()) + "\n";
-    
-    message += "\nTotal windows: " + std::to_string(windows.size());
 
     MessageBoxA(NULL, message.c_str(), "DualDesk Monitor Info", MB_OK | MB_ICONINFORMATION);
 

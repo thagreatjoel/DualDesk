@@ -20,6 +20,8 @@ add_library(DualDeskCore STATIC
     core/src/input/input_event.cpp
     core/src/input/input_manager.cpp
     core/src/input/raw_input_handler.cpp
+    core/src/workspace/workspace.cpp
+    core/src/workspace/workspace_manager.cpp
 )
 
 target_include_directories(DualDeskCore
@@ -27,7 +29,6 @@ target_include_directories(DualDeskCore
         core/include
 )
 
-# Link Windows libraries
 target_link_libraries(DualDeskCore
     PUBLIC
         user32
