@@ -52,25 +52,21 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             RECT rect;
             GetClientRect(hwnd, &rect);
             
-            // White background
             HBRUSH whiteBrush = CreateSolidBrush(RGB(255, 255, 255));
             FillRect(hdc, &rect, whiteBrush);
             DeleteObject(whiteBrush);
             
-            // Create font
-            HFONT hFont = CreateFont(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            HFONT hFont = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                      DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Consolas");
             SelectObject(hdc, hFont);
             
             std::stringstream ss;
             
-            // Header
             ss << "+----------------------------------------------------+\n";
             ss << "|                DUALDESK STATUS                     |\n";
             ss << "+----------------------------------------------------+\n\n";
             
-            // Monitors
             if (g_displayManager) {
                 auto monitors = g_displayManager->EnumerateDisplays();
                 ss << "MONITORS: " << monitors.size() << "\n";
@@ -83,7 +79,6 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             }
             ss << "\n";
             
-            // Workspaces
             if (g_workspaceManager) {
                 auto workspaces = g_workspaceManager->GetAllWorkspaces();
                 ss << "WORKSPACES: " << workspaces.size() << "\n";
@@ -94,7 +89,6 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             }
             ss << "\n";
             
-            // Input Devices
             if (g_inputManager) {
                 auto keyboards = g_inputManager->GetKeyboards();
                 auto mice = g_inputManager->GetMice();
@@ -110,18 +104,16 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             }
             ss << "\n";
             
-            // Last Event
             ss << "LAST EVENT: " << g_lastEvent << "\n\n";
             
-            // Help
             ss << "----------------------------------------------------\n";
             ss << "  Win+Shift+Left   -> Move window left\n";
             ss << "  Win+Shift+Right  -> Move window right\n";
+            ss << "  D                -> Show device info\n";
             ss << "  ESC              -> Exit\n";
             
             std::string text = ss.str();
             
-            // Draw text
             RECT textRect = rect;
             textRect.left += 15;
             textRect.top += 15;
@@ -142,6 +134,42 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             if (wParam == VK_ESCAPE) {
                 g_running = false;
                 DestroyWindow(hwnd);
+                return 0;
+            }
+            if (wParam == 'D' && g_inputManager) {
+                auto keyboards = g_inputManager->GetKeyboards();
+                auto mice = g_inputManager->GetMice();
+                
+                std::string message = "DualDesk Device Info\n";
+                message += "========================\n\n";
+                message += "Keyboards: " + std::to_string(keyboards.size()) + "\n";
+                for (const auto& kb : keyboards) {
+                    message += "  - " + WStringToString(kb.deviceName) + "\n";
+                }
+                message += "\nMice: " + std::to_string(mice.size()) + "\n";
+                for (const auto& mouse : mice) {
+                    message += "  - " + WStringToString(mouse.deviceName) + "\n";
+                }
+                
+                HANDLE hDriver = CreateFileA(
+                    "\\\\.\\DualDesk",
+                    GENERIC_READ | GENERIC_WRITE,
+                    0,
+                    NULL,
+                    OPEN_EXISTING,
+                    0,
+                    NULL
+                );
+                
+                if (hDriver != INVALID_HANDLE_VALUE) {
+                    message += "\n[DualDesk] Driver Status: CONNECTED";
+                    CloseHandle(hDriver);
+                } else {
+                    message += "\n[DualDesk] Driver Status: NOT FOUND (Error: " + std::to_string(GetLastError()) + ")";
+                }
+                
+                MessageBoxA(NULL, message.c_str(), "DualDesk Device Info", 
+                            MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST);
                 return 0;
             }
             break;
@@ -174,7 +202,6 @@ LRESULT CALLBACK InputWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 PostQuitMessage(0);
                 return 0;
             }
-            // Win+Shift+Left/Right for window movement
             if ((GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000)) {
                 if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
                     if (wParam == VK_RIGHT) {
@@ -208,20 +235,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     
     LOG_INFO("DualDesk starting...");
 
-    // ==================== CREATE INPUT WINDOW ====================
-    WNDCLASSEX wcInput = {0};
-    wcInput.cbSize = sizeof(WNDCLASSEX);
+    WNDCLASSEXW wcInput = {0};
+    wcInput.cbSize = sizeof(WNDCLASSEXW);
     wcInput.lpfnWndProc = InputWindowProc;
     wcInput.hInstance = hInstance;
     wcInput.lpszClassName = L"DualDeskInputWindow";
     wcInput.hCursor = LoadCursor(NULL, IDC_ARROW);
 
-    if (!RegisterClassEx(&wcInput)) {
+    if (!RegisterClassExW(&wcInput)) {
         MessageBoxA(NULL, "Failed to register input window class", "Error", MB_OK);
         return 1;
     }
 
-    HWND hwndInput = CreateWindowEx(
+    HWND hwndInput = CreateWindowExW(
         0,
         L"DualDeskInputWindow",
         L"DualDesk Input",
@@ -237,7 +263,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     ShowWindow(hwndInput, SW_HIDE);
 
-    // ==================== INITIALIZE MANAGERS ====================
     dualdesk::InputManager inputManager;
     dualdesk::DisplayManager displayManager;
     dualdesk::WorkspaceManager workspaceManager;
@@ -250,7 +275,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     displayManager.EnumerateDisplays();
     workspaceManager.Initialize(&displayManager, &inputManager);
 
-    // ==================== SETUP CALLBACKS ====================
     inputManager.SetDeviceChangeCallback([](const dualdesk::InputDevice& device, bool added) {
         std::string name(device.deviceName.begin(), device.deviceName.end());
         std::string typeStr;
@@ -279,7 +303,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         }
     });
 
-    // ==================== WINDOW MOVEMENT ====================
     dualdesk::WindowMover windowMover;
     windowMover.Initialize(&workspaceManager);
     g_windowMover = &windowMover;
@@ -289,16 +312,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         UpdateStatusWindow();
     });
 
-    // ==================== CREATE STATUS WINDOW ====================
-    WNDCLASSEX wcStatus = {0};
-    wcStatus.cbSize = sizeof(WNDCLASSEX);
+    WNDCLASSEXW wcStatus = {0};
+    wcStatus.cbSize = sizeof(WNDCLASSEXW);
     wcStatus.lpfnWndProc = StatusWindowProc;
     wcStatus.hInstance = hInstance;
     wcStatus.lpszClassName = L"DualDeskStatusWindow";
     wcStatus.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wcStatus.hCursor = LoadCursor(NULL, IDC_ARROW);
 
-    if (!RegisterClassEx(&wcStatus)) {
+    if (!RegisterClassExW(&wcStatus)) {
         MessageBoxA(NULL, "Failed to register status window class", "Error", MB_OK);
         return 1;
     }
@@ -310,7 +332,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     int x = (screenWidth - windowWidth) / 2;
     int y = (screenHeight - windowHeight) / 2;
 
-    g_statusWindow = CreateWindowEx(
+    g_statusWindow = CreateWindowExW(
         WS_EX_TOPMOST,
         L"DualDeskStatusWindow",
         L"DualDesk - Status Monitor",
@@ -328,8 +350,30 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     UpdateWindow(g_statusWindow);
     UpdateStatusWindow();
 
-    // Show startup message
     g_lastEvent = "DualDesk started";
+    UpdateStatusWindow();
+
+    // ==================== TEST DRIVER COMMUNICATION ====================
+    LOG_INFO("=== DRIVER COMMUNICATION TEST ===");
+    
+    HANDLE hDriver = CreateFileA(
+        "\\\\.\\DualDesk",
+        GENERIC_READ | GENERIC_WRITE,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        0,
+        NULL
+    );
+    
+    if (hDriver == INVALID_HANDLE_VALUE) {
+        LOG_INFO("Driver not found. Error: " + std::to_string(GetLastError()));
+        g_lastEvent = "Driver: NOT CONNECTED";
+    } else {
+        LOG_INFO("Driver communication established!");
+        g_lastEvent = "Driver: CONNECTED";
+        CloseHandle(hDriver);
+    }
     UpdateStatusWindow();
 
     // ==================== MAIN MESSAGE LOOP ====================

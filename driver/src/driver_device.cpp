@@ -1,9 +1,12 @@
 #include "dualdesk/driver/driver_common.h"
 #include "dualdesk/driver/ioctl_codes.h"
+#include <ntddk.h>
+#include <wdm.h>
 
 NTSTATUS OnCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     UNREFERENCED_PARAMETER(DeviceObject);
-    KdPrint(("[DualDesk] OnCreate called\n"));
+    
+    DbgPrint("[DualDesk] OnCreate called\n");
     
     Irp->IoStatus.Status = STATUS_SUCCESS;
     Irp->IoStatus.Information = 0;
@@ -13,7 +16,8 @@ NTSTATUS OnCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
 
 NTSTATUS OnClose(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     UNREFERENCED_PARAMETER(DeviceObject);
-    KdPrint(("[DualDesk] OnClose called\n"));
+    
+    DbgPrint("[DualDesk] OnClose called\n");
     
     Irp->IoStatus.Status = STATUS_SUCCESS;
     Irp->IoStatus.Information = 0;

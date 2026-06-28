@@ -10,6 +10,12 @@ PnpLockdown=1
 [DestinationDirs] 
 DefaultDestDir = 12 
  
+[SourceDisksNames] 
+1 = %%DiskName%% 
+ 
+[SourceDisksFiles] 
+dualdesk.sys = 1 
+ 
 [Manufacturer] 
 %%Manufacturer%% = Standard,NTamd64 
  

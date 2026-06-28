@@ -1,5 +1,15 @@
 #include "dualdesk/driver/driver_common.h"
 #include "dualdesk/driver/ioctl_codes.h"
+#include <ntddk.h>
+#include <wdm.h>
+
+// Forward declarations
+NTSTATUS HandleGetDevices(PIRP Irp);
+NTSTATUS HandleRouteInput(PIRP Irp);
+
+// These are defined in driver_filter.cpp
+extern NTSTATUS HandleAssignDevice(PIRP Irp);
+extern NTSTATUS HandleLockCursor(PIRP Irp);
 
 NTSTATUS OnDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     UNREFERENCED_PARAMETER(DeviceObject);
@@ -37,25 +47,11 @@ NTSTATUS OnDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
 }
 
 NTSTATUS HandleGetDevices(PIRP Irp) {
-    KdPrint(("[DualDesk] HandleGetDevices called\n"));
-    // Implementation for device enumeration
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS HandleAssignDevice(PIRP Irp) {
-    KdPrint(("[DualDesk] HandleAssignDevice called\n"));
-    // Implementation for device assignment
+    DbgPrint("[DualDesk] HandleGetDevices called\n");
     return STATUS_SUCCESS;
 }
 
 NTSTATUS HandleRouteInput(PIRP Irp) {
-    KdPrint(("[DualDesk] HandleRouteInput called\n"));
-    // Implementation for input routing
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS HandleLockCursor(PIRP Irp) {
-    KdPrint(("[DualDesk] HandleLockCursor called\n"));
-    // Implementation for cursor locking
+    DbgPrint("[DualDesk] HandleRouteInput called\n");
     return STATUS_SUCCESS;
 }

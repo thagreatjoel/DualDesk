@@ -1,6 +1,6 @@
 #pragma once
 
-#include <winioctl.h>
+#include <ntddk.h>
 
 #define DUALDESK_IOCTL_BASE 0x800
 
