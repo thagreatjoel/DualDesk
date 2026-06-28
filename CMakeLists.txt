@@ -9,9 +9,10 @@ if(WIN32)
     add_definitions(-DNOMINMAX)
     add_definitions(-DUNICODE)
     add_definitions(-D_UNICODE)
+    add_definitions(-D_WIN32_WINNT=0x0A00)
 endif()
 
-# Core library - ONLY ONE add_library!
+# Core library
 add_library(DualDeskCore STATIC
     core/src/logger.cpp
     core/src/display_manager.cpp
@@ -41,6 +42,7 @@ target_link_libraries(DualDeskCore
         kernel32
         hid
         setupapi
+        comctl32
 )
 
 # Main executable
@@ -52,4 +54,5 @@ target_link_libraries(DualDesk
     DualDeskCore
     user32
     kernel32
+    comctl32
 )
