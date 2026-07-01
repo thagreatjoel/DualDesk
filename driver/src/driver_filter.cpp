@@ -1,89 +1,74 @@
 #include "dualdesk/driver/driver_common.h"
-#include "dualdesk/driver/ioctl_codes.h"
 #include <ntddk.h>
 #include <wdm.h>
 
-// Device assignments (from user mode)
-typedef struct _DEVICE_ASSIGNMENT {
-    ULONG DeviceId;
-    ULONG WorkspaceId;
-    ULONG MonitorIndex;
-    BOOLEAN IsKeyboard;
-    BOOLEAN Active;
-} DEVICE_ASSIGNMENT;
+// Global variables for input filtering
+typedef struct _INPUT_FILTER_CONTEXT {
+    ULONG MonitorId;
+    BOOLEAN IsActive;
+} INPUT_FILTER_CONTEXT;
 
-// Global assignment table
-#define MAX_DEVICES 32
-DEVICE_ASSIGNMENT g_DeviceAssignments[MAX_DEVICES];
-ULONG g_NumAssignments = 0;
+static INPUT_FILTER_CONTEXT g_KeyboardFilter = {0, FALSE};
+static INPUT_FILTER_CONTEXT g_MouseFilter = {0, FALSE};
 
-// Cursor lock state
-BOOLEAN g_CursorLocked = FALSE;
-ULONG g_LockedMonitor = 0;
+// Keyboard filter - called on each keyboard input
+NTSTATUS KeyboardFilter(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
+    // TODO: Implement keyboard filtering
+    // Check which monitor this keyboard belongs to
+    // Only route to correct monitor
+    
+    DbgPrint("[DualDesk] KeyboardFilter called\n");
+    
+    // Pass through for now
+    return STATUS_SUCCESS;
+}
 
-// Function to assign device to workspace (used by HandleAssignDevice)
-NTSTATUS AssignDeviceToWorkspace(ULONG deviceId, ULONG workspaceId, BOOLEAN isKeyboard) {
-    DbgPrint("[DualDesk] Assigning Device %lu to Workspace %lu\n", deviceId, workspaceId);
+// Mouse filter - called on each mouse input
+NTSTATUS MouseFilter(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
+    // TODO: Implement mouse filtering
+    // Check which monitor this mouse belongs to
+    // Only route to correct monitor
     
-    // Check if device already assigned
-    for (ULONG i = 0; i < g_NumAssignments; i++) {
-        if (g_DeviceAssignments[i].DeviceId == deviceId) {
-            g_DeviceAssignments[i].WorkspaceId = workspaceId;
-            g_DeviceAssignments[i].Active = TRUE;
-            return STATUS_SUCCESS;
-        }
-    }
+    DbgPrint("[DualDesk] MouseFilter called\n");
     
-    // Add new assignment
-    if (g_NumAssignments >= MAX_DEVICES) {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
+    // Pass through for now
+    return STATUS_SUCCESS;
+}
+
+// Check if input should be routed to a specific monitor
+BOOLEAN ShouldRouteInput(ULONG DeviceId, ULONG* MonitorId) {
+    // TODO: Implement actual routing logic
+    // For now, always route to monitor 0
+    *MonitorId = 0;
+    return TRUE;
+}
+
+// Confine mouse cursor to monitor bounds
+NTSTATUS ConfineMouseCursor(ULONG MonitorId) {
+    // TODO: Implement mouse confinement
+    DbgPrint("[DualDesk] ConfineMouseCursor to monitor %d\n", MonitorId);
+    return STATUS_SUCCESS;
+}
+
+// Route keyboard input to specific monitor
+NTSTATUS RouteKeyboard(ULONG DeviceId, ULONG MonitorId) {
+    DbgPrint("[DualDesk] RouteKeyboard: Device %d -> Monitor %d\n", DeviceId, MonitorId);
     
-    g_DeviceAssignments[g_NumAssignments].DeviceId = deviceId;
-    g_DeviceAssignments[g_NumAssignments].WorkspaceId = workspaceId;
-    g_DeviceAssignments[g_NumAssignments].IsKeyboard = isKeyboard;
-    g_DeviceAssignments[g_NumAssignments].Active = TRUE;
-    g_NumAssignments++;
+    // Update keyboard filter context
+    g_KeyboardFilter.MonitorId = MonitorId;
+    g_KeyboardFilter.IsActive = TRUE;
     
     return STATUS_SUCCESS;
 }
 
-// Handle device assignment from user mode
-NTSTATUS HandleAssignDevice(PIRP Irp) {
-    PIO_STACK_LOCATION irpSp = IoGetCurrentIrpStackLocation(Irp);
-    PDUALDESK_DEVICE_INFO deviceInfo = 
-        (PDUALDESK_DEVICE_INFO)Irp->AssociatedIrp.SystemBuffer;
+// Route mouse input to specific monitor
+NTSTATUS RouteMouse(ULONG DeviceId, ULONG MonitorId) {
+    DbgPrint("[DualDesk] RouteMouse: Device %d -> Monitor %d\n", DeviceId, MonitorId);
     
-    if (!deviceInfo) {
-        return STATUS_INVALID_PARAMETER;
-    }
+    // Update mouse filter context
+    g_MouseFilter.MonitorId = MonitorId;
+    g_MouseFilter.IsActive = TRUE;
     
-    ULONG deviceId = deviceInfo->DeviceId;
-    ULONG workspaceId = deviceInfo->WorkspaceId;
-    BOOLEAN isKeyboard = (deviceInfo->DeviceType == 0);
-    
-    return AssignDeviceToWorkspace(deviceId, workspaceId, isKeyboard);
-}
-
-// Handle cursor lock from user mode
-NTSTATUS HandleLockCursor(PIRP Irp) {
-    PIO_STACK_LOCATION irpSp = IoGetCurrentIrpStackLocation(Irp);
-    PDUALDESK_LOCK_INFO lockInfo = 
-        (PDUALDESK_LOCK_INFO)Irp->AssociatedIrp.SystemBuffer;
-    
-    if (!lockInfo) {
-        return STATUS_INVALID_PARAMETER;
-    }
-    
-    if (lockInfo->LockCursor) {
-        g_CursorLocked = TRUE;
-        g_LockedMonitor = lockInfo->MonitorIndex;
-        DbgPrint("[DualDesk] Cursor locked to Monitor %lu\n", g_LockedMonitor);
-    } else {
-        g_CursorLocked = FALSE;
-        g_LockedMonitor = 0;
-        DbgPrint("[DualDesk] Cursor unlocked\n");
-    }
-    
-    return STATUS_SUCCESS;
+    // Confine mouse to this monitor
+    return ConfineMouseCursor(MonitorId);
 }

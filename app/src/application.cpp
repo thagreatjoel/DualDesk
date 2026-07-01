@@ -1,8 +1,9 @@
 #include "dualddesk/application.h"
 #include "dualddesk/version.h"
 #include "dualddesk/core/logger.h"
-
+#include "dualddesk/core/driver_interface.h"
 #include <string>
+#include <memory>
 
 namespace dualdesk {
 
@@ -25,11 +26,34 @@ Application::~Application() {
 void Application::Initialize() {
     LOG_INFO("DualDesk v{} starting up", Version::GetString());
     CreateMainWindow();
+    InitializeModules();
     is_running_ = true;
 }
 
+void Application::InitializeModules() {
+    LOG_INFO("Initializing modules...");
+    
+    // Connect to driver
+    driverInterface_ = std::make_unique<DriverInterface>();
+    if (driverInterface_->Open()) {
+        LOG_INFO("Driver connected successfully");
+        
+        // Enable isolation mode
+        if (driverInterface_->SetRouteMode(1)) {
+            LOG_INFO("Isolation mode enabled");
+        }
+        
+        // Get driver stats
+        DUALDESK_STATS_OUTPUT stats;
+        if (driverInterface_->GetStats(stats)) {
+            LOG_INFO("Driver stats: Total events routed = {}", stats.TotalEventsRouted);
+        }
+    } else {
+        LOG_WARN("Driver not available. Input isolation disabled.");
+    }
+}
+
 void Application::CreateMainWindow() {
-    // Register window class
     WNDCLASSEX wc = {};
     wc.cbSize = sizeof(WNDCLASSEX);
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -44,7 +68,6 @@ void Application::CreateMainWindow() {
         throw std::runtime_error("Failed to register window class");
     }
 
-    // Create the window (hidden initially)
     main_window_ = CreateWindowEx(
         0,
         WINDOW_CLASS_NAME,
@@ -69,11 +92,9 @@ void Application::CreateMainWindow() {
 int Application::Run() {
     LOG_INFO("Entering message loop");
 
-    // Show window
     ShowWindow(main_window_, SW_SHOW);
     UpdateWindow(main_window_);
 
-    // Message loop
     MSG msg = {};
     while (is_running_ && GetMessage(&msg, nullptr, 0, 0)) {
         TranslateMessage(&msg);
@@ -94,6 +115,12 @@ void Application::Shutdown() {
 
 void Application::Cleanup() {
     LOG_INFO("Cleaning up");
+    
+    // Close driver connection
+    if (driverInterface_) {
+        driverInterface_->Close();
+        driverInterface_.reset();
+    }
     
     if (main_window_) {
         DestroyWindow(main_window_);
@@ -134,7 +161,6 @@ LRESULT Application::HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
         return 0;
 
     case WM_SIZE:
-        // Handle window resize
         return 0;
 
     default:

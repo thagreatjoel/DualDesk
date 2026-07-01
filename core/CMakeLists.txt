@@ -51,3 +51,12 @@ target_link_libraries(DualDesk
     user32
     kernel32
 )
+
+set(CORE_SOURCES
+    src/logger.cpp
+    src/config_manager.cpp
+    src/error_handler.cpp
+    src/event_dispatcher.cpp
+    src/thread_pool.cpp
+    src/driver_interface.cpp  # <-- Add this
+)
