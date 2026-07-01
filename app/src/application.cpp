@@ -1,7 +1,7 @@
-#include "dualddesk/application.h"
-#include "dualddesk/version.h"
-#include "dualddesk/core/logger.h"
-#include "dualddesk/core/driver_interface.h"
+#include "dualdesk/application.h"
+#include "dualdesk/version.h"
+#include "dualdesk/core/logger.h"
+#include "dualdesk/core/driver_interface.h"
 #include <string>
 #include <memory>
 
@@ -26,30 +26,34 @@ Application::~Application() {
 void Application::Initialize() {
     LOG_INFO("DualDesk v{} starting up", Version::GetString());
     CreateMainWindow();
-    InitializeModules();
+    InitializeModules();  // <-- Call this
     is_running_ = true;
 }
 
 void Application::InitializeModules() {
     LOG_INFO("Initializing modules...");
     
-    // Connect to driver
-    driverInterface_ = std::make_unique<DriverInterface>();
-    if (driverInterface_->Open()) {
-        LOG_INFO("Driver connected successfully");
-        
-        // Enable isolation mode
-        if (driverInterface_->SetRouteMode(1)) {
-            LOG_INFO("Isolation mode enabled");
+    // Try to connect to driver
+    try {
+        driverInterface_ = std::make_unique<DriverInterface>();
+        if (driverInterface_->Open()) {
+            LOG_INFO("Driver connected successfully");
+            
+            // Enable isolation mode
+            if (driverInterface_->SetRouteMode(1)) {
+                LOG_INFO("Isolation mode enabled");
+            }
+            
+            // Get driver stats
+            DUALDESK_STATS_OUTPUT stats;
+            if (driverInterface_->GetStats(stats)) {
+                LOG_INFO("Driver stats: Total events routed = {}", stats.TotalEventsRouted);
+            }
+        } else {
+            LOG_WARN("Driver not available. Input isolation disabled.");
         }
-        
-        // Get driver stats
-        DUALDESK_STATS_OUTPUT stats;
-        if (driverInterface_->GetStats(stats)) {
-            LOG_INFO("Driver stats: Total events routed = {}", stats.TotalEventsRouted);
-        }
-    } else {
-        LOG_WARN("Driver not available. Input isolation disabled.");
+    } catch (const std::exception& e) {
+        LOG_ERROR("Failed to initialize driver: {}", e.what());
     }
 }
 
