@@ -1,61 +1,78 @@
 #pragma once
 
 #include <string>
+#include <fstream>
 #include <iostream>
-#include <windows.h>
-#include <sstream>
+#include <chrono>
+#include <iomanip>
+#include <mutex>
+#include <ctime>
 
 namespace dualdesk {
 
-enum class LogLevel {
-    Trace,
-    Debug, 
-    Info,
-    Warn,
-    Error,
-    Critical
-};
-
 class Logger {
 public:
-    static void Log(LogLevel level, const std::string& message) {
-        std::string prefix;
-        switch(level) {
-            case LogLevel::Trace: prefix = "[TRACE]"; break;
-            case LogLevel::Debug: prefix = "[DEBUG]"; break;
-            case LogLevel::Info:  prefix = "[INFO]"; break;
-            case LogLevel::Warn:  prefix = "[WARN]"; break;
-            case LogLevel::Error: prefix = "[ERROR]"; break;
-            case LogLevel::Critical: prefix = "[CRITICAL]"; break;
-        }
+    static void SetLogFile(const std::string& path) {
+        std::lock_guard<std::mutex> lock(getMutex());
+        getLogFilePath() = path;
+    }
+
+    static void Info(const std::string& msg) {
+        Log("INFO", msg);
+    }
+
+    static void Debug(const std::string& msg) {
+        Log("DEBUG", msg);
+    }
+
+    static void Error(const std::string& msg) {
+        Log("ERROR", msg);
+    }
+
+    static void Warn(const std::string& msg) {
+        Log("WARN", msg);
+    }
+
+private:
+    static void Log(const std::string& level, const std::string& msg) {
+        std::lock_guard<std::mutex> lock(getMutex());
         
-        std::string fullMessage = prefix + " " + message + "\n";
-        std::cout << fullMessage;
-        OutputDebugStringA(fullMessage.c_str());
+        auto now = std::chrono::system_clock::now();
+        std::time_t time_t = std::chrono::system_clock::to_time_t(now);
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()) % 1000;
+        
+        std::string output = std::string("[") + level + "] ";
+        output += std::to_string(time_t) + "." + std::to_string(ms.count()) + " ";
+        output += msg + "\n";
+        
+        // Console
+        std::cout << output;
+        
+        // File
+        if (!getLogFilePath().empty()) {
+            std::ofstream file(getLogFilePath(), std::ios::app);
+            if (file.is_open()) {
+                file << output;
+            }
+        }
     }
-    
-    // Template version for formatted messages
-    template<typename... Args>
-    static void LogFormatted(LogLevel level, const std::string& format, Args&&... args) {
-        // Simple string concatenation for now
-        std::string message = format;
-        // We'll expand this later
-        Log(level, message);
+
+    static std::mutex& getMutex() {
+        static std::mutex mutex;
+        return mutex;
     }
-    
-    static void Trace(const std::string& msg) { Log(LogLevel::Trace, msg); }
-    static void Debug(const std::string& msg) { Log(LogLevel::Debug, msg); }
-    static void Info(const std::string& msg) { Log(LogLevel::Info, msg); }
-    static void Warn(const std::string& msg) { Log(LogLevel::Warn, msg); }
-    static void Error(const std::string& msg) { Log(LogLevel::Error, msg); }
-    static void Critical(const std::string& msg) { Log(LogLevel::Critical, msg); }
+
+    static std::string& getLogFilePath() {
+        static std::string path = "dualddesk.log";
+        return path;
+    }
 };
 
-#define LOG_TRACE(msg) ::dualdesk::Logger::Trace(msg)
-#define LOG_DEBUG(msg) ::dualdesk::Logger::Debug(msg)
-#define LOG_INFO(msg)  ::dualdesk::Logger::Info(msg)
-#define LOG_WARN(msg)  ::dualdesk::Logger::Warn(msg)
-#define LOG_ERROR(msg) ::dualdesk::Logger::Error(msg)
-#define LOG_CRITICAL(msg) ::dualdesk::Logger::Critical(msg)
+// Convenience macros - NO circular includes!
+#define LOG_INFO(msg)   ::dualdesk::Logger::Info(msg)
+#define LOG_DEBUG(msg)  ::dualdesk::Logger::Debug(msg)
+#define LOG_ERROR(msg)  ::dualdesk::Logger::Error(msg)
+#define LOG_WARN(msg)   ::dualdesk::Logger::Warn(msg)
 
 } // namespace dualdesk

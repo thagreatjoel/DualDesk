@@ -5,7 +5,9 @@
 #include "dualdesk/workspace/window_mover.h"
 #include "dualdesk/input/input_manager.h"
 #include "dualdesk/input/input_router.h"
+#include "dualdesk/core/driver_interface.h"
 #include <windows.h>
+#include <windowsx.h>  // For GET_X_LPARAM, GET_Y_LPARAM
 #include <commctrl.h>
 #include <string>
 #include <sstream>
@@ -14,6 +16,7 @@
 #include <set>
 #include <map>
 #include <cctype>
+#include <fstream>
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -24,6 +27,7 @@ InputManager* g_inputManager = nullptr;
 WindowMover* g_windowMover = nullptr;
 DisplayManager* g_displayManager = nullptr;
 WorkspaceManager* g_workspaceManager = nullptr;
+DriverInterface* g_driverInterface = nullptr;
 HWND g_statusWindow = nullptr;
 HWND g_treeView = nullptr;
 HWND g_statusBar = nullptr;
@@ -39,6 +43,9 @@ HTREEITEM g_nodeMonitors = nullptr;
 HTREEITEM g_nodeWorkspaces = nullptr;
 HTREEITEM g_nodeDevices = nullptr;
 HTREEITEM g_nodeWindows = nullptr;
+
+// Device assignment tracking
+std::map<HANDLE, DWORD> g_deviceWorkspaceMap;
 
 // Icon indices
 enum IconIndex {
@@ -62,6 +69,8 @@ void BuildTree(HWND parent);
 void RefreshTree();
 void LayoutControls(HWND hwnd);
 void UpdateStatusBar();
+void ShowDeviceContextMenu(HWND hwnd, POINT pt);
+void AssignDeviceToWorkspace(HANDLE deviceHandle, DWORD workspaceId);
 
 // Helper functions
 std::string GetCleanDeviceName(const std::wstring& deviceName) {
@@ -106,9 +115,14 @@ void BuildImageList() {
     g_imageList = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, ICON_COUNT, 0);
     
     for (int i = 0; i < ICON_COUNT; i++) {
-        HICON icon = CreateIcon(GetModuleHandle(NULL), 16, 16, 1, 1, NULL, NULL);
-        ImageList_AddIcon(g_imageList, icon);
-        DestroyIcon(icon);
+        HICON icon = LoadIcon(NULL, IDI_APPLICATION);
+        if (icon) {
+            ImageList_AddIcon(g_imageList, icon);
+        } else {
+            HBITMAP bmp = CreateBitmap(16, 16, 1, 1, NULL);
+            ImageList_Add(g_imageList, bmp, (HBITMAP)NULL);
+            DeleteObject(bmp);
+        }
     }
     
     TreeView_SetImageList(g_treeView, g_imageList, TVSIL_NORMAL);
@@ -200,13 +214,26 @@ bool IsWindowTrackable(HWND hwnd) {
     return true;
 }
 
+void AssignDeviceToWorkspace(HANDLE deviceHandle, DWORD workspaceId) {
+    if (g_driverInterface && g_driverInterface->IsConnected()) {
+        if (g_driverInterface->AssignDeviceToWorkspace(deviceHandle, workspaceId)) {
+            g_deviceWorkspaceMap[deviceHandle] = workspaceId;
+            g_lastEvent = "Device assigned to workspace " + std::to_string(workspaceId);
+            RefreshTree();
+            UpdateStatusBar();
+        }
+    }
+}
+
 void RefreshTree() {
     if (!g_treeView) return;
 
     // --- Monitors ---
     ClearChildren(g_nodeMonitors);
+    int monitorCount = 0;
     if (g_displayManager) {
         auto monitors = g_displayManager->EnumerateDisplays();
+        monitorCount = (int)monitors.size();
         for (size_t i = 0; i < monitors.size(); ++i) {
             std::wstringstream label;
             label << L"Monitor " << (i + 1) << L"  \u2014  "
@@ -214,18 +241,20 @@ void RefreshTree() {
             if (monitors[i].isPrimary) label << L"  (Primary)";
             AddNode(g_nodeMonitors, label.str(), ICON_MONITOR, false);
         }
-        std::wstring rootLabel = L"Monitors (" + std::to_wstring(monitors.size()) + L")";
-        TVITEMW item = {0};
-        item.mask = TVIF_TEXT | TVIF_HANDLE;
-        item.hItem = g_nodeMonitors;
-        item.pszText = const_cast<LPWSTR>(rootLabel.c_str());
-        TreeView_SetItem(g_treeView, &item);
     }
+    std::wstring monitorLabel = L"Monitors (" + std::to_wstring(monitorCount) + L")";
+    TVITEMW item = {0};
+    item.mask = TVIF_TEXT | TVIF_HANDLE;
+    item.hItem = g_nodeMonitors;
+    item.pszText = const_cast<LPWSTR>(monitorLabel.c_str());
+    TreeView_SetItem(g_treeView, &item);
 
     // --- Workspaces ---
     ClearChildren(g_nodeWorkspaces);
+    int workspaceCount = 0;
     if (g_workspaceManager) {
         auto workspaces = g_workspaceManager->GetAllWorkspaces();
+        workspaceCount = (int)workspaces.size();
         for (auto* ws : workspaces) {
             std::wstringstream label;
             label << ToWide(ws->GetName()) << L"  \u2014  "
@@ -233,61 +262,59 @@ void RefreshTree() {
                   << (ws->GetWindowCount() == 1 ? L"" : L"s");
             AddNode(g_nodeWorkspaces, label.str(), ICON_WORKSPACE, false);
         }
-        std::wstring rootLabel = L"Workspaces (" + std::to_wstring(workspaces.size()) + L")";
-        TVITEMW item = {0};
-        item.mask = TVIF_TEXT | TVIF_HANDLE;
-        item.hItem = g_nodeWorkspaces;
-        item.pszText = const_cast<LPWSTR>(rootLabel.c_str());
-        TreeView_SetItem(g_treeView, &item);
     }
+    std::wstring workspaceLabel = L"Workspaces (" + std::to_wstring(workspaceCount) + L")";
+    item.hItem = g_nodeWorkspaces;
+    item.pszText = const_cast<LPWSTR>(workspaceLabel.c_str());
+    TreeView_SetItem(g_treeView, &item);
 
     // --- Windows ---
     ClearChildren(g_nodeWindows);
     int windowCount = 0;
     
-    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-        int* count = reinterpret_cast<int*>(lParam);
-        
-        if (!IsWindowTrackable(hwnd)) return TRUE;
-        
-        std::wstring title = GetWindowTitle(hwnd);
-        std::wstring cls = GetWindowClassName(hwnd);
-        
-        if (!title.empty()) {
-            std::wstringstream label;
-            label << title;
+    if (g_displayManager) {
+        EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+            int* count = reinterpret_cast<int*>(lParam);
             
-            if (!cls.empty() && cls != L"") {
-                label << L"  [" << cls << L"]";
-            }
+            if (!IsWindowTrackable(hwnd)) return TRUE;
             
-            HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            MONITORINFO mi = {sizeof(MONITORINFO)};
-            if (GetMonitorInfo(monitor, &mi)) {
-                int monitorIndex = 1;
-                if (g_displayManager) {
-                    auto monitors = g_displayManager->EnumerateDisplays();
-                    for (size_t i = 0; i < monitors.size(); ++i) {
-                        if (monitors[i].monitor == monitor) {
-                            monitorIndex = (int)i + 1;
-                            break;
+            std::wstring title = GetWindowTitle(hwnd);
+            std::wstring cls = GetWindowClassName(hwnd);
+            
+            if (!title.empty()) {
+                std::wstringstream label;
+                label << title;
+                
+                if (!cls.empty() && cls != L"") {
+                    label << L"  [" << cls << L"]";
+                }
+                
+                HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi = {sizeof(MONITORINFO)};
+                if (GetMonitorInfo(monitor, &mi)) {
+                    int monitorIndex = 1;
+                    if (g_displayManager) {
+                        auto monitors = g_displayManager->EnumerateDisplays();
+                        for (size_t i = 0; i < monitors.size(); ++i) {
+                            if (monitors[i].monitor == monitor) {
+                                monitorIndex = (int)i + 1;
+                                break;
+                            }
                         }
                     }
+                    label << L"  (Monitor " << monitorIndex << L")";
                 }
-                label << L"  (Monitor " << monitorIndex << L")";
+                
+                AddNode(g_nodeWindows, label.str(), ICON_WINDOW, false);
+                (*count)++;
             }
-            
-            AddNode(g_nodeWindows, label.str(), ICON_WINDOW, false);
-            (*count)++;
-        }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&windowCount));
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&windowCount));
+    }
     
-    std::wstring rootLabel = L"Windows (" + std::to_wstring(windowCount) + L")";
-    TVITEMW item = {0};
-    item.mask = TVIF_TEXT | TVIF_HANDLE;
+    std::wstring windowLabel = L"Windows (" + std::to_wstring(windowCount) + L")";
     item.hItem = g_nodeWindows;
-    item.pszText = const_cast<LPWSTR>(rootLabel.c_str());
+    item.pszText = const_cast<LPWSTR>(windowLabel.c_str());
     TreeView_SetItem(g_treeView, &item);
 
     // --- Devices ---
@@ -296,7 +323,16 @@ void RefreshTree() {
     if (g_inputManager) {
         auto keyboards = g_inputManager->GetKeyboards();
         for (const auto& kb : keyboards) {
-            AddNode(g_nodeDevices, ToWide(GetCleanDeviceName(kb.deviceName)) + L"  (Keyboard)", ICON_KEYBOARD, false);
+            std::string cleanName = GetCleanDeviceName(kb.deviceName);
+            std::wstring label = ToWide(cleanName) + L"  (Keyboard)";
+            
+            // Check if assigned to a workspace
+            auto it = g_deviceWorkspaceMap.find(kb.deviceHandle);
+            if (it != g_deviceWorkspaceMap.end()) {
+                label += L"  → Workspace " + std::to_wstring(it->second);
+            }
+            
+            AddNode(g_nodeDevices, label, ICON_KEYBOARD, false);
             deviceCount++;
         }
         auto mice = g_inputManager->GetMice();
@@ -308,7 +344,16 @@ void RefreshTree() {
                                (lowerName.find("trackpad") != std::string::npos);
             int icon = isTouchpad ? ICON_TOUCHPAD : ICON_MOUSE;
             const wchar_t* suffix = isTouchpad ? L"  (Touchpad)" : L"  (Mouse)";
-            AddNode(g_nodeDevices, ToWide(cleanName) + suffix, icon, false);
+            
+            std::wstring label = ToWide(cleanName) + suffix;
+            
+            // Check if assigned to a workspace
+            auto it = g_deviceWorkspaceMap.find(mouse.deviceHandle);
+            if (it != g_deviceWorkspaceMap.end()) {
+                label += L"  → Workspace " + std::to_wstring(it->second);
+            }
+            
+            AddNode(g_nodeDevices, label, icon, false);
             deviceCount++;
         }
     }
@@ -318,12 +363,10 @@ void RefreshTree() {
     AddNode(g_nodeDevices, g_driverConnected ? L"DualDesk Driver  \u2014  Connected" : L"DualDesk Driver  \u2014  Not connected",
             g_driverConnected ? ICON_OK : ICON_WARN, false);
 
-    std::wstring rootLabelDevices = L"Devices (" + std::to_wstring(deviceCount) + L")";
-    TVITEMW itemDevices = {0};
-    itemDevices.mask = TVIF_TEXT | TVIF_HANDLE;
-    itemDevices.hItem = g_nodeDevices;
-    itemDevices.pszText = const_cast<LPWSTR>(rootLabelDevices.c_str());
-    TreeView_SetItem(g_treeView, &itemDevices);
+    std::wstring deviceLabel = L"Devices (" + std::to_wstring(deviceCount) + L")";
+    item.hItem = g_nodeDevices;
+    item.pszText = const_cast<LPWSTR>(deviceLabel.c_str());
+    TreeView_SetItem(g_treeView, &item);
 
     TreeView_Expand(g_treeView, g_nodeMonitors, TVE_EXPAND);
     TreeView_Expand(g_treeView, g_nodeWorkspaces, TVE_EXPAND);
@@ -356,6 +399,49 @@ void LayoutControls(HWND hwnd) {
     SetWindowPos(g_treeView, NULL, 6, treeY, treeW, treeH, SWP_NOZORDER);
 }
 
+void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
+    // Get selected item
+    HTREEITEM selected = TreeView_GetSelection(g_treeView);
+    if (!selected) return;
+    
+    // Get the parent to check if it's a device
+    HTREEITEM parent = TreeView_GetParent(g_treeView, selected);
+    if (parent != g_nodeDevices) return;
+    
+    // Get device handle from stored data
+    TVITEMW item = {0};
+    item.hItem = selected;
+    item.mask = TVIF_PARAM;
+    TreeView_GetItem(g_treeView, &item);
+    
+    HANDLE deviceHandle = (HANDLE)item.lParam;
+    
+    // Create context menu
+    HMENU hMenu = CreatePopupMenu();
+    AppendMenuW(hMenu, MF_STRING, 1, L"Assign to Workspace A");
+    AppendMenuW(hMenu, MF_STRING, 2, L"Assign to Workspace B");
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(hMenu, MF_STRING, 3, L"Remove Assignment");
+    
+    int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, NULL);
+    DestroyMenu(hMenu);
+    
+    switch(cmd) {
+        case 1:
+            AssignDeviceToWorkspace(deviceHandle, 0);
+            break;
+        case 2:
+            AssignDeviceToWorkspace(deviceHandle, 1);
+            break;
+        case 3:
+            g_deviceWorkspaceMap.erase(deviceHandle);
+            g_lastEvent = "Device unassigned";
+            RefreshTree();
+            UpdateStatusBar();
+            break;
+    }
+}
+
 LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_CREATE: {
@@ -383,6 +469,13 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             RefreshTree();
             UpdateStatusBar();
             return 0;
+        case WM_CONTEXTMENU: {
+            POINT pt;
+              pt.x = LOWORD(lParam);
+              pt.y = HIWORD(lParam);
+            ShowDeviceContextMenu(hwnd, pt);
+            return 0;
+        }
         case WM_DESTROY:
             KillTimer(hwnd, 1);
             if (g_font) DeleteObject(g_font);
@@ -470,7 +563,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
         INITCOMMONCONTROLSEX icex = {0};
         icex.dwSize = sizeof(icex);
-        icex.dwICC = ICC_TREEVIEW_CLASSES | ICC_STANDARD_CLASSES;
+        icex.dwICC = ICC_TREEVIEW_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES;
         InitCommonControlsEx(&icex);
 
         // Register input window class
@@ -501,14 +594,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         InputManager inputManager;
         DisplayManager displayManager;
         WorkspaceManager workspaceManager;
+        DriverInterface driverInterface;
 
         g_inputManager = &inputManager;
         g_displayManager = &displayManager;
         g_workspaceManager = &workspaceManager;
+        g_driverInterface = &driverInterface;
 
         inputManager.Initialize(hwndInput);
         displayManager.EnumerateDisplays();
         workspaceManager.Initialize(&displayManager, &inputManager);
+        
+        // Connect to driver
+        if (driverInterface.Open()) {
+            LOG_INFO("Driver connected");
+            driverInterface.SetRouteMode(1); // Enable isolation mode
+        } else {
+            LOG_WARN("Driver not available");
+        }
 
         // Set up callbacks
         inputManager.SetDeviceChangeCallback([](const InputDevice& device, bool added) {
@@ -521,8 +624,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             }
             if (added) {
                 g_lastEvent = "Plugged in: " + name + " (" + typeStr + ")";
+                // Auto-assign new devices to default workspace
+                if (g_driverInterface && g_driverInterface->IsConnected()) {
+                    g_driverInterface->AssignDeviceToWorkspace(device.deviceHandle, 0);
+                }
             } else {
                 g_lastEvent = "Unplugged: " + name + " (" + typeStr + ")";
+                g_deviceWorkspaceMap.erase(device.deviceHandle);
             }
             RefreshTree();
             UpdateStatusBar();
@@ -622,9 +730,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 0;
     }
     catch (const std::exception& e) {
-        // Fixed: Use string concatenation instead of std::format
-        LOG_CRITICAL("Unhandled exception: ");
-        LOG_CRITICAL(e.what());
+        LOG_ERROR("Unhandled exception: ");
+        LOG_ERROR(e.what());
         std::string msg = "Fatal error: ";
         msg += e.what();
         MessageBoxA(NULL, 
@@ -634,7 +741,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 1;
     }
     catch (...) {
-        LOG_CRITICAL("Unknown exception caught!");
+        LOG_ERROR("Unknown exception caught!");
         MessageBoxA(NULL,
                     "Unknown fatal error occurred!",
                     "DualDesk Fatal Error",

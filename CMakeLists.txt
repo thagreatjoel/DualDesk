@@ -1,3 +1,6 @@
+# Add this at the very beginning
+set(CMAKE_TOOLCHAIN_FILE "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+
 cmake_minimum_required(VERSION 3.15)
 project(DualDesk)
 
@@ -12,10 +15,14 @@ if(WIN32)
     add_definitions(-D_WIN32_WINNT=0x0A00)
 endif()
 
+# Find spdlog
+find_package(spdlog CONFIG REQUIRED)
+
 # Core library
 add_library(DualDeskCore STATIC
     core/src/logger.cpp
     core/src/display_manager.cpp
+    core/src/driver_interface.cpp  
     core/src/window_tracker.cpp
     core/src/input/input_device.cpp
     core/src/input/input_event.cpp
@@ -34,10 +41,12 @@ add_library(DualDeskCore STATIC
 target_include_directories(DualDeskCore
     PUBLIC
         core/include
+        C:/dev/vcpkg/installed/x64-windows/include
 )
 
 target_link_libraries(DualDeskCore
     PUBLIC
+        spdlog::spdlog
         user32
         kernel32
         hid

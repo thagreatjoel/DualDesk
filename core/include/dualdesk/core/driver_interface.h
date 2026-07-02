@@ -26,6 +26,9 @@ namespace dualdesk {
 #define IOCTL_DUALDESK_GET_STATS \
     CTL_CODE(FILE_DEVICE_UNKNOWN, DUALDESK_IOCTL_BASE + 5, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+#define IOCTL_DUALDESK_ASSIGN_DEVICE_TO_WORKSPACE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, DUALDESK_IOCTL_BASE + 6, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 // Data structures
 typedef struct _DUALDESK_ADD_DEVICE_INPUT {
     HANDLE DeviceHandle;
@@ -39,12 +42,26 @@ typedef struct _DUALDESK_ROUTE_INPUT_INPUT {
     ULONG TargetProcessId;
 } DUALDESK_ROUTE_INPUT_INPUT;
 
+typedef struct _DUALDESK_ASSIGN_DEVICE_INPUT {
+    HANDLE DeviceHandle;
+    ULONG WorkspaceId;
+} DUALDESK_ASSIGN_DEVICE_INPUT;
+
 typedef struct _DUALDESK_STATS_OUTPUT {
     ULONG TotalDevices;
     ULONG TotalEventsRouted;
     ULONG TotalEventsBlocked;
     LARGE_INTEGER DriverStartTime;
 } DUALDESK_STATS_OUTPUT;
+
+// Workspace assignment
+struct DeviceAssignment {
+    HANDLE deviceHandle;
+    std::string deviceName;
+    std::string deviceType;
+    DWORD workspaceId;
+    bool isAssigned;
+};
 
 /**
  * @brief Interface for communicating with the DualDesk kernel driver
@@ -54,58 +71,17 @@ public:
     DriverInterface();
     ~DriverInterface();
 
-    /**
-     * @brief Opens connection to the driver
-     * @return true if successful
-     */
     bool Open();
-
-    /**
-     * @brief Closes connection to the driver
-     */
     void Close();
-
-    /**
-     * @brief Checks if driver is connected
-     */
     bool IsConnected() const { return hDriver_ != INVALID_HANDLE_VALUE; }
 
-    /**
-     * @brief Adds a device to be monitored by the driver
-     * @param deviceHandle Handle to the input device
-     * @param processId Target process ID
-     * @param isKeyboard true if keyboard
-     * @param isMouse true if mouse
-     */
     bool AddDevice(HANDLE deviceHandle, DWORD processId, bool isKeyboard, bool isMouse);
-
-    /**
-     * @brief Removes a device from monitoring
-     * @param deviceHandle Handle to the input device
-     */
     bool RemoveDevice(HANDLE deviceHandle);
-
-    /**
-     * @brief Routes input from a device to a specific process
-     * @param deviceHandle Handle to the input device
-     * @param targetProcessId Target process ID
-     */
     bool RouteInput(HANDLE deviceHandle, DWORD targetProcessId);
-
-    /**
-     * @brief Sets the route mode
-     * @param mode 0 = normal, 1 = isolated
-     */
     bool SetRouteMode(DWORD mode);
-
-    /**
-     * @brief Gets driver statistics
-     */
     bool GetStats(DUALDESK_STATS_OUTPUT& stats);
-
-    /**
-     * @brief Gets the last error code
-     */
+    bool AssignDeviceToWorkspace(HANDLE deviceHandle, DWORD workspaceId);
+    
     DWORD GetLastError() const { return lastError_; }
 
 private:

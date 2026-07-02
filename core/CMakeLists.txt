@@ -16,6 +16,7 @@ add_library(DualDeskCore STATIC
     core/src/logger.cpp
     core/src/display_manager.cpp
     core/src/window_tracker.cpp
+    core/src/driver_interface.cpp                           # <-- ADD THIS
     core/src/input/input_device.cpp
     core/src/input/input_event.cpp
     core/src/input/input_manager.cpp
@@ -50,13 +51,10 @@ target_link_libraries(DualDesk
     DualDeskCore
     user32
     kernel32
+    comctl32
 )
 
-set(CORE_SOURCES
-    src/logger.cpp
-    src/config_manager.cpp
-    src/error_handler.cpp
-    src/event_dispatcher.cpp
-    src/thread_pool.cpp
-    src/driver_interface.cpp  # <-- Add this
+# Set properties
+set_target_properties(DualDesk PROPERTIES
+    WIN32_EXECUTABLE TRUE
 )

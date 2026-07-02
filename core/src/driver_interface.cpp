@@ -1,6 +1,7 @@
-#include "dualddesk/core/driver_interface.h"
-#include "dualddesk/core/logger.h"
+#include "dualdesk/core/driver_interface.h"
+#include "dualdesk/core/logger.h"
 #include <iostream>
+#include <sstream>
 
 namespace dualdesk {
 
@@ -16,7 +17,6 @@ bool DriverInterface::Open() {
         return true;
     }
 
-    // Try multiple possible device paths
     const std::vector<std::string> paths = {
         "\\\\.\\DualDesk",
         "\\\\.\\DualDeskDriver",
@@ -36,13 +36,15 @@ bool DriverInterface::Open() {
         );
 
         if (hDriver_ != INVALID_HANDLE_VALUE) {
-            LOG_INFO("Connected to driver at: {}", path);
+            std::string msg = "Connected to driver at: " + path;
+            LOG_INFO(msg);
             return true;
         }
     }
 
     lastError_ = GetLastError();
-    LOG_ERROR("Failed to open driver. Error: {}", lastError_);
+    std::string msg = "Failed to open driver. Error: " + std::to_string(lastError_);
+    LOG_ERROR(msg);
     return false;
 }
 
@@ -73,7 +75,8 @@ bool DriverInterface::SendIoctl(DWORD ioctlCode, void* input, size_t inputSize,
 
     if (!result) {
         lastError_ = GetLastError();
-        LOG_ERROR("IOCTL 0x{:08X} failed. Error: {}", ioctlCode, lastError_);
+        std::string msg = "IOCTL 0x" + std::to_string(ioctlCode) + " failed. Error: " + std::to_string(lastError_);
+        LOG_ERROR(msg);
         return false;
     }
 
@@ -94,8 +97,11 @@ bool DriverInterface::AddDevice(HANDLE deviceHandle, DWORD processId,
                             NULL, 0, bytesReturned);
 
     if (result) {
-        LOG_INFO("Added device: handle={}, pid={}, keyboard={}, mouse={}",
-                 (void*)deviceHandle, processId, isKeyboard, isMouse);
+        std::string msg = "Added device: handle=" + std::to_string((uintptr_t)deviceHandle) + 
+                          ", pid=" + std::to_string(processId) +
+                          ", keyboard=" + std::to_string(isKeyboard) +
+                          ", mouse=" + std::to_string(isMouse);
+        LOG_INFO(msg);
     }
 
     return result;
@@ -125,7 +131,9 @@ bool DriverInterface::RouteInput(HANDLE deviceHandle, DWORD targetProcessId) {
                             NULL, 0, bytesReturned);
 
     if (result) {
-        LOG_INFO("Routing input: handle={}, pid={}", (void*)deviceHandle, targetProcessId);
+        std::string msg = "Routing input: handle=" + std::to_string((uintptr_t)deviceHandle) + 
+                          ", pid=" + std::to_string(targetProcessId);
+        LOG_INFO(msg);
     }
 
     return result;
@@ -137,7 +145,8 @@ bool DriverInterface::SetRouteMode(DWORD mode) {
                             NULL, 0, bytesReturned);
 
     if (result) {
-        LOG_INFO("Route mode set to: {}", mode);
+        std::string msg = "Route mode set to: " + std::to_string(mode);
+        LOG_INFO(msg);
     }
 
     return result;
@@ -149,8 +158,29 @@ bool DriverInterface::GetStats(DUALDESK_STATS_OUTPUT& stats) {
                             &stats, sizeof(stats), bytesReturned);
 
     if (result) {
-        LOG_INFO("Stats: devices={}, routed={}, blocked={}",
-                 stats.TotalDevices, stats.TotalEventsRouted, stats.TotalEventsBlocked);
+        std::string msg = "Stats: devices=" + std::to_string(stats.TotalDevices) + 
+                          ", routed=" + std::to_string(stats.TotalEventsRouted) +
+                          ", blocked=" + std::to_string(stats.TotalEventsBlocked);
+        LOG_INFO(msg);
+    }
+
+    return result;
+}
+
+bool DriverInterface::AssignDeviceToWorkspace(HANDLE deviceHandle, DWORD workspaceId) {
+    DUALDESK_ASSIGN_DEVICE_INPUT input = {
+        deviceHandle,
+        workspaceId
+    };
+
+    DWORD bytesReturned;
+    bool result = SendIoctl(IOCTL_DUALDESK_ASSIGN_DEVICE_TO_WORKSPACE, &input, sizeof(input),
+                            NULL, 0, bytesReturned);
+
+    if (result) {
+        std::string msg = "Device assigned to workspace: handle=" + std::to_string((uintptr_t)deviceHandle) + 
+                          ", workspace=" + std::to_string(workspaceId);
+        LOG_INFO(msg);
     }
 
     return result;

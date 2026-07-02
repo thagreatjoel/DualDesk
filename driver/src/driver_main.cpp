@@ -169,6 +169,32 @@ VOID DualDeskEvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request,
     }
 
     WdfRequestComplete(Request, status);
+
+    // Add to the IOCTL switch statement in DualDeskEvtIoDeviceControl
+case IOCTL_DUALDESK_ASSIGN_DEVICE_TO_WORKSPACE: {
+    if (InputBufferLength < sizeof(DUALDESK_ASSIGN_DEVICE_INPUT)) {
+        status = STATUS_BUFFER_TOO_SMALL;
+        break;
+    }
+
+    PDUALDESK_ASSIGN_DEVICE_INPUT input = NULL;
+    status = WdfRequestRetrieveInputBuffer(
+        Request,
+        sizeof(DUALDESK_ASSIGN_DEVICE_INPUT),
+        (PVOID*)&input,
+        NULL
+    );
+    if (!NT_SUCCESS(status)) break;
+
+    // Store the assignment for this device
+    // Implementation depends on your driver design
+    
+    KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+        "DualDesk Driver: Device assigned to workspace %lu\n", input->WorkspaceId);
+    
+    status = STATUS_SUCCESS;
+    break;
+}
 }
 
 // Driver unload
