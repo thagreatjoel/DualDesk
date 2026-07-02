@@ -7,7 +7,7 @@
 #include "dualdesk/input/input_router.h"
 #include "dualdesk/core/driver_interface.h"
 #include <windows.h>
-#include <windowsx.h>  // For GET_X_LPARAM, GET_Y_LPARAM
+#include <windowsx.h>
 #include <commctrl.h>
 #include <string>
 #include <sstream>
@@ -37,6 +37,7 @@ HIMAGELIST g_imageList = nullptr;
 bool g_running = true;
 std::string g_lastEvent = "None";
 bool g_driverConnected = false;
+bool g_refreshPaused = false;
 
 // Root category nodes
 HTREEITEM g_nodeMonitors = nullptr;
@@ -46,6 +47,12 @@ HTREEITEM g_nodeWindows = nullptr;
 
 // Device assignment tracking
 std::map<HANDLE, DWORD> g_deviceWorkspaceMap;
+
+// Cache for change detection
+int g_cachedMonitorCount = -1;
+int g_cachedWindowCount = -1;
+int g_cachedDeviceCount = -1;
+bool g_cachedDriverState = false;
 
 // Icon indices
 enum IconIndex {
@@ -71,30 +78,104 @@ void LayoutControls(HWND hwnd);
 void UpdateStatusBar();
 void ShowDeviceContextMenu(HWND hwnd, POINT pt);
 void AssignDeviceToWorkspace(HANDLE deviceHandle, DWORD workspaceId);
+bool CheckForChanges();
 
-// Helper functions
+// ===================== DEVICE IDENTIFICATION =====================
+
 std::string GetCleanDeviceName(const std::wstring& deviceName) {
     std::string name;
     for (wchar_t c : deviceName) {
         if (c < 128) name += (char)c;
     }
-
-    size_t pos = name.find_last_of("\\#");
-    if (pos != std::string::npos) name = name.substr(pos + 1);
-
-    std::vector<std::string> suffixes = {"&Col01", "&Col02", "&Col03", "&Col04", "&MI_00", "&MI_01"};
-    for (const auto& suffix : suffixes) {
-        size_t found = name.find(suffix);
-        if (found != std::string::npos) name = name.substr(0, found);
+    
+    std::string result = name;
+    
+    size_t pos = result.find_last_of("\\#");
+    if (pos != std::string::npos && pos + 1 < result.length()) {
+        result = result.substr(pos + 1);
     }
-
-    while (!name.empty() && (name.back() == '&' || name.back() == '#' || name.back() == '_')) {
-        name.pop_back();
+    
+    std::vector<std::string> removeSuffixes = {
+        "&Col01", "&Col02", "&Col03", "&Col04", 
+        "&MI_00", "&MI_01", "&MI_02", "&MI_03",
+        "&0000", "&0001", "&0002", "&0003",
+        "#", "_"
+    };
+    
+    for (const auto& suffix : removeSuffixes) {
+        size_t found = result.find(suffix);
+        if (found != std::string::npos) {
+            result = result.substr(0, found);
+        }
     }
+    
+    while (!result.empty() && (result.back() == '&' || result.back() == '#' || 
+                               result.back() == '_' || result.back() == '\\')) {
+        result.pop_back();
+    }
+    
+    if (result.empty() || result.length() < 3 || 
+        result == "Keyboard" || result == "Mouse" || 
+        result == "HID" || result == "USB") {
+        
+        std::string lowerName = name;
+        for (auto& c : lowerName) c = tolower(c);
+        
+        size_t vidPos = lowerName.find("vid_");
+        if (vidPos != std::string::npos) {
+            std::string vid = name.substr(vidPos + 4, 4);
+            size_t pidPos = lowerName.find("pid_");
+            if (pidPos != std::string::npos) {
+                std::string pid = name.substr(pidPos + 4, 4);
+                result = "Device (VID:" + vid + ", PID:" + pid + ")";
+            }
+        }
+        
+        if (result.empty() || result == "Keyboard" || result == "Mouse") {
+            if (lowerName.find("keyboard") != std::string::npos) {
+                result = "USB Keyboard";
+            } else if (lowerName.find("mouse") != std::string::npos) {
+                result = "USB Mouse";
+            } else if (lowerName.find("touchpad") != std::string::npos) {
+                result = "Touchpad";
+            } else if (lowerName.find("bluetooth") != std::string::npos) {
+                result = "Bluetooth Device";
+            }
+        }
+        
+        if (result.empty() || result == "Keyboard" || result == "Mouse") {
+            static int deviceCounter = 0;
+            deviceCounter++;
+            result = "Device " + std::to_string(deviceCounter);
+        }
+    }
+    
+    if (result.length() > 35) {
+        result = result.substr(0, 32) + "...";
+    }
+    
+    return result;
+}
 
-    if (name.empty()) return "Unknown Device";
-    if (name.length() > 45) name = name.substr(0, 42) + "...";
-    return name;
+std::string GetDeviceInstanceId(const std::wstring& devicePath) {
+    std::string result;
+    for (wchar_t c : devicePath) {
+        if (c < 128) result += (char)c;
+    }
+    
+    size_t pos = result.find_last_of("\\#");
+    if (pos != std::string::npos) {
+        std::string instance = result.substr(pos + 1);
+        size_t endPos = instance.find("&");
+        if (endPos != std::string::npos) {
+            instance = instance.substr(0, endPos);
+        }
+        if (instance.length() > 8) {
+            return instance.substr(0, 12);
+        }
+        return instance;
+    }
+    return "";
 }
 
 std::wstring ToWide(const std::string& s) {
@@ -110,7 +191,8 @@ bool IsDriverConnected() {
     return false;
 }
 
-// Tree view functions
+// ===================== TREE VIEW FUNCTIONS =====================
+
 void BuildImageList() {
     g_imageList = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, ICON_COUNT, 0);
     
@@ -218,15 +300,61 @@ void AssignDeviceToWorkspace(HANDLE deviceHandle, DWORD workspaceId) {
     if (g_driverInterface && g_driverInterface->IsConnected()) {
         if (g_driverInterface->AssignDeviceToWorkspace(deviceHandle, workspaceId)) {
             g_deviceWorkspaceMap[deviceHandle] = workspaceId;
-            g_lastEvent = "Device assigned to workspace " + std::to_string(workspaceId);
+            std::string msg = "Device assigned to workspace " + std::to_string(workspaceId);
+            g_lastEvent = msg;
             RefreshTree();
             UpdateStatusBar();
         }
     }
 }
 
+bool CheckForChanges() {
+    bool changed = false;
+    
+    int monitorCount = 0;
+    if (g_displayManager) {
+        auto monitors = g_displayManager->EnumerateDisplays();
+        monitorCount = (int)monitors.size();
+    }
+    if (monitorCount != g_cachedMonitorCount) {
+        g_cachedMonitorCount = monitorCount;
+        changed = true;
+    }
+    
+    int windowCount = 0;
+    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+        int* count = reinterpret_cast<int*>(lParam);
+        if (IsWindowTrackable(hwnd)) {
+            (*count)++;
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&windowCount));
+    if (windowCount != g_cachedWindowCount) {
+        g_cachedWindowCount = windowCount;
+        changed = true;
+    }
+    
+    int deviceCount = 0;
+    if (g_inputManager) {
+        deviceCount += (int)g_inputManager->GetKeyboards().size();
+        deviceCount += (int)g_inputManager->GetMice().size();
+    }
+    if (deviceCount != g_cachedDeviceCount) {
+        g_cachedDeviceCount = deviceCount;
+        changed = true;
+    }
+    
+    bool driverState = IsDriverConnected();
+    if (driverState != g_cachedDriverState) {
+        g_cachedDriverState = driverState;
+        changed = true;
+    }
+    
+    return changed;
+}
+
 void RefreshTree() {
-    if (!g_treeView) return;
+    if (!g_treeView || g_refreshPaused) return;
 
     // --- Monitors ---
     ClearChildren(g_nodeMonitors);
@@ -320,13 +448,21 @@ void RefreshTree() {
     // --- Devices ---
     ClearChildren(g_nodeDevices);
     int deviceCount = 0;
+    
     if (g_inputManager) {
         auto keyboards = g_inputManager->GetKeyboards();
+        int kbIndex = 1;
         for (const auto& kb : keyboards) {
             std::string cleanName = GetCleanDeviceName(kb.deviceName);
-            std::wstring label = ToWide(cleanName) + L"  (Keyboard)";
+            std::string instanceId = GetDeviceInstanceId(kb.deviceName);
             
-            // Check if assigned to a workspace
+            std::wstring label;
+            if (!instanceId.empty() && instanceId != "Keyboard") {
+                label = ToWide(cleanName + " [" + instanceId + "]") + L"  (Keyboard " + std::to_wstring(kbIndex) + L")";
+            } else {
+                label = ToWide(cleanName) + L"  (Keyboard " + std::to_wstring(kbIndex) + L")";
+            }
+            
             auto it = g_deviceWorkspaceMap.find(kb.deviceHandle);
             if (it != g_deviceWorkspaceMap.end()) {
                 label += L"  → Workspace " + std::to_wstring(it->second);
@@ -334,20 +470,28 @@ void RefreshTree() {
             
             AddNode(g_nodeDevices, label, ICON_KEYBOARD, false);
             deviceCount++;
+            kbIndex++;
         }
+        
         auto mice = g_inputManager->GetMice();
+        int mouseIndex = 1;
         for (const auto& mouse : mice) {
             std::string cleanName = GetCleanDeviceName(mouse.deviceName);
+            std::string instanceId = GetDeviceInstanceId(mouse.deviceName);
+            
             std::string lowerName = cleanName;
             for (auto& c : lowerName) c = (char)tolower((unsigned char)c);
             bool isTouchpad = (lowerName.find("touchpad") != std::string::npos) ||
-                               (lowerName.find("trackpad") != std::string::npos);
+                              (lowerName.find("trackpad") != std::string::npos);
             int icon = isTouchpad ? ICON_TOUCHPAD : ICON_MOUSE;
-            const wchar_t* suffix = isTouchpad ? L"  (Touchpad)" : L"  (Mouse)";
             
-            std::wstring label = ToWide(cleanName) + suffix;
+            std::wstring label;
+            if (!instanceId.empty() && instanceId != "Mouse") {
+                label = ToWide(cleanName + " [" + instanceId + "]") + L"  (" + (isTouchpad ? L"Touchpad" : L"Mouse") + L" " + std::to_wstring(mouseIndex) + L")";
+            } else {
+                label = ToWide(cleanName) + L"  (" + (isTouchpad ? L"Touchpad" : L"Mouse") + L" " + std::to_wstring(mouseIndex) + L")";
+            }
             
-            // Check if assigned to a workspace
             auto it = g_deviceWorkspaceMap.find(mouse.deviceHandle);
             if (it != g_deviceWorkspaceMap.end()) {
                 label += L"  → Workspace " + std::to_wstring(it->second);
@@ -355,6 +499,7 @@ void RefreshTree() {
             
             AddNode(g_nodeDevices, label, icon, false);
             deviceCount++;
+            mouseIndex++;
         }
     }
     
@@ -400,45 +545,75 @@ void LayoutControls(HWND hwnd) {
 }
 
 void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
-    // Get selected item
     HTREEITEM selected = TreeView_GetSelection(g_treeView);
     if (!selected) return;
     
-    // Get the parent to check if it's a device
     HTREEITEM parent = TreeView_GetParent(g_treeView, selected);
     if (parent != g_nodeDevices) return;
     
-    // Get device handle from stored data
+    wchar_t text[256];
     TVITEMW item = {0};
     item.hItem = selected;
-    item.mask = TVIF_PARAM;
+    item.mask = TVIF_TEXT | TVIF_PARAM;
+    item.pszText = text;
+    item.cchTextMax = 256;
     TreeView_GetItem(g_treeView, &item);
+    
+    std::wstring itemText = text;
+    
+    bool isInputDevice = (itemText.find(L"Keyboard") != std::string::npos ||
+                          itemText.find(L"Mouse") != std::string::npos ||
+                          itemText.find(L"Touchpad") != std::string::npos);
+    
+    bool isDriverStatus = (itemText.find(L"Driver") != std::string::npos);
+    
+    if (!isInputDevice || isDriverStatus) {
+        return;
+    }
     
     HANDLE deviceHandle = (HANDLE)item.lParam;
     
-    // Create context menu
+    auto workspaces = g_workspaceManager->GetAllWorkspaces();
+    if (workspaces.empty()) {
+        MessageBoxA(hwnd, "No workspaces available!", "Info", MB_OK);
+        return;
+    }
+    
     HMENU hMenu = CreatePopupMenu();
-    AppendMenuW(hMenu, MF_STRING, 1, L"Assign to Workspace A");
-    AppendMenuW(hMenu, MF_STRING, 2, L"Assign to Workspace B");
+    
+    int menuId = 1;
+    for (auto* ws : workspaces) {
+        std::wstring menuText = L"Assign to " + ToWide(ws->GetName());
+        AppendMenuW(hMenu, MF_STRING, menuId, menuText.c_str());
+        menuId++;
+    }
+    
     AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(hMenu, MF_STRING, 3, L"Remove Assignment");
+    AppendMenuW(hMenu, MF_STRING, 999, L"Remove Assignment");
     
     int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, NULL);
     DestroyMenu(hMenu);
     
-    switch(cmd) {
-        case 1:
-            AssignDeviceToWorkspace(deviceHandle, 0);
-            break;
-        case 2:
-            AssignDeviceToWorkspace(deviceHandle, 1);
-            break;
-        case 3:
-            g_deviceWorkspaceMap.erase(deviceHandle);
-            g_lastEvent = "Device unassigned";
-            RefreshTree();
-            UpdateStatusBar();
-            break;
+    if (cmd == 999) {
+        g_deviceWorkspaceMap.erase(deviceHandle);
+        g_lastEvent = "Device unassigned";
+        RefreshTree();
+        UpdateStatusBar();
+        return;
+    }
+    
+    if (cmd >= 1 && cmd <= (int)workspaces.size()) {
+        int workspaceIndex = cmd - 1;
+        auto* ws = workspaces[workspaceIndex];
+        if (g_driverInterface && g_driverInterface->IsConnected()) {
+            if (g_driverInterface->AssignDeviceToWorkspace(deviceHandle, ws->GetId())) {
+                g_deviceWorkspaceMap[deviceHandle] = ws->GetId();
+                std::string msg = "Device assigned to " + ws->GetName();
+                g_lastEvent = msg;
+                RefreshTree();
+                UpdateStatusBar();
+            }
+        }
     }
 }
 
@@ -459,8 +634,10 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             return 0;
         }
         case WM_TIMER:
-            RefreshTree();
-            UpdateStatusBar();
+            if (CheckForChanges()) {
+                RefreshTree();
+                UpdateStatusBar();
+            }
             return 0;
         case WM_SIZE:
             LayoutControls(hwnd);
@@ -471,9 +648,11 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             return 0;
         case WM_CONTEXTMENU: {
             POINT pt;
-              pt.x = LOWORD(lParam);
-              pt.y = HIWORD(lParam);
+            pt.x = GET_X_LPARAM(lParam);
+            pt.y = GET_Y_LPARAM(lParam);
+            g_refreshPaused = true;
             ShowDeviceContextMenu(hwnd, pt);
+            g_refreshPaused = false;
             return 0;
         }
         case WM_DESTROY:
@@ -489,8 +668,8 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                 DestroyWindow(hwnd);
                 return 0;
             }
-            if (wParam == 'D') {
-                g_lastEvent = "Status refreshed";
+            if (wParam == 'R') {
+                g_lastEvent = "Manual refresh";
                 RefreshTree();
                 UpdateStatusBar();
                 return 0;
@@ -566,7 +745,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         icex.dwICC = ICC_TREEVIEW_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES;
         InitCommonControlsEx(&icex);
 
-        // Register input window class
         WNDCLASSEXW wcInput = {0};
         wcInput.cbSize = sizeof(WNDCLASSEXW);
         wcInput.lpfnWndProc = InputWindowProc;
@@ -590,7 +768,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
         ShowWindow(hwndInput, SW_HIDE);
 
-        // Initialize managers
         InputManager inputManager;
         DisplayManager displayManager;
         WorkspaceManager workspaceManager;
@@ -604,16 +781,30 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         inputManager.Initialize(hwndInput);
         displayManager.EnumerateDisplays();
         workspaceManager.Initialize(&displayManager, &inputManager);
+
+        auto workspaces = workspaceManager.GetAllWorkspaces();
+        std::string logMsg = "Number of workspaces: " + std::to_string(workspaces.size());
+        LOG_INFO(logMsg.c_str());
         
-        // Connect to driver
         if (driverInterface.Open()) {
             LOG_INFO("Driver connected");
-            driverInterface.SetRouteMode(1); // Enable isolation mode
+            driverInterface.SetRouteMode(1);
         } else {
             LOG_WARN("Driver not available");
         }
 
-        // Set up callbacks
+        g_cachedMonitorCount = (int)displayManager.EnumerateDisplays().size();
+        g_cachedWindowCount = 0;
+        EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+            int* count = reinterpret_cast<int*>(lParam);
+            if (IsWindowTrackable(hwnd)) {
+                (*count)++;
+            }
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&g_cachedWindowCount));
+        g_cachedDeviceCount = (int)inputManager.GetKeyboards().size() + (int)inputManager.GetMice().size();
+        g_cachedDriverState = IsDriverConnected();
+
         inputManager.SetDeviceChangeCallback([](const InputDevice& device, bool added) {
             std::string name = GetCleanDeviceName(device.deviceName);
             std::string typeStr;
@@ -624,9 +815,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             }
             if (added) {
                 g_lastEvent = "Plugged in: " + name + " (" + typeStr + ")";
-                // Auto-assign new devices to default workspace
                 if (g_driverInterface && g_driverInterface->IsConnected()) {
                     g_driverInterface->AssignDeviceToWorkspace(device.deviceHandle, 0);
+                    g_deviceWorkspaceMap[device.deviceHandle] = 0;
                 }
             } else {
                 g_lastEvent = "Unplugged: " + name + " (" + typeStr + ")";
@@ -647,7 +838,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             }
         });
 
-        // Initialize WindowMover
         WindowMover windowMover;
         windowMover.Initialize(&workspaceManager);
         g_windowMover = &windowMover;
@@ -658,7 +848,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             UpdateStatusBar();
         });
 
-        // Register status window class
         WNDCLASSEXW wcStatus = {0};
         wcStatus.cbSize = sizeof(WNDCLASSEXW);
         wcStatus.lpfnWndProc = StatusWindowProc;
@@ -673,7 +862,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             return 1;
         }
 
-        // Create status window
         int windowWidth = 700;
         int windowHeight = 550;
         int screenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -706,7 +894,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
         LOG_INFO("DualDesk running...");
 
-        // Main message loop
         MSG msg;
         DWORD lastCheckTime = GetTickCount();
 
@@ -730,12 +917,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 0;
     }
     catch (const std::exception& e) {
-        LOG_ERROR("Unhandled exception: ");
-        LOG_ERROR(e.what());
-        std::string msg = "Fatal error: ";
-        msg += e.what();
+        std::string errMsg = "Unhandled exception: ";
+        errMsg += e.what();
+        LOG_ERROR(errMsg.c_str());
+        std::string errMsg2 = "Fatal error: ";
+        errMsg2 += e.what();
         MessageBoxA(NULL, 
-                    msg.c_str(),
+                    errMsg2.c_str(),
                     "DualDesk Fatal Error",
                     MB_OK | MB_ICONERROR);
         return 1;

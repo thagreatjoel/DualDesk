@@ -24,12 +24,20 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DUALDESK_DEVICE_CONTEXT, DualDeskGetDeviceCon
 #define IOCTL_DUALDESK_GET_STATS \
     CTL_CODE(FILE_DEVICE_UNKNOWN, DUALDESK_IOCTL_BASE + 5, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+#define IOCTL_DUALDESK_ASSIGN_DEVICE_TO_WORKSPACE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, DUALDESK_IOCTL_BASE + 6, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 typedef struct _DUALDESK_STATS_OUTPUT {
     ULONG TotalDevices;
     ULONG TotalEventsRouted;
     ULONG TotalEventsBlocked;
     LARGE_INTEGER DriverStartTime;
 } DUALDESK_STATS_OUTPUT, *PDUALDESK_STATS_OUTPUT;
+
+typedef struct _DUALDESK_ASSIGN_DEVICE_INPUT {
+    HANDLE DeviceHandle;
+    ULONG WorkspaceId;
+} DUALDESK_ASSIGN_DEVICE_INPUT, *PDUALDESK_ASSIGN_DEVICE_INPUT;
 
 // Function prototypes
 NTSTATUS DualDeskEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit);
@@ -43,8 +51,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
     WDF_DRIVER_CONFIG config;
     WDFDRIVER driver;
 
-    KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-        "DualDesk Driver: DriverEntry called\n");
+    DbgPrint("DualDesk: DriverEntry called\n");
 
     WDF_DRIVER_CONFIG_INIT(&config, DualDeskEvtDeviceAdd);
     config.EvtDriverUnload = DualDeskEvtDriverUnload;
@@ -52,14 +59,11 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
     status = WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &config, &driver);
 
     if (!NT_SUCCESS(status)) {
-        KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
-            "DualDesk Driver: WdfDriverCreate failed with 0x%08X\n", status);
+        DbgPrint("DualDesk: WdfDriverCreate failed with 0x%08X\n", status);
         return status;
     }
 
-    KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-        "DualDesk Driver: DriverEntry completed successfully\n");
-
+    DbgPrint("DualDesk: DriverEntry completed successfully\n");
     return STATUS_SUCCESS;
 }
 
@@ -73,8 +77,7 @@ NTSTATUS DualDeskEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit) {
     WDF_IO_QUEUE_CONFIG queueConfig;
     UNICODE_STRING symbolicLink;
 
-    KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-        "DualDesk Driver: EvtDeviceAdd called\n");
+    DbgPrint("DualDesk: EvtDeviceAdd called\n");
 
     // Set device type
     WdfDeviceInitSetDeviceType(DeviceInit, FILE_DEVICE_UNKNOWN);
@@ -85,8 +88,7 @@ NTSTATUS DualDeskEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit) {
 
     status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
     if (!NT_SUCCESS(status)) {
-        KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
-            "DualDesk Driver: WdfDeviceCreate failed with 0x%08X\n", status);
+        DbgPrint("DualDesk: WdfDeviceCreate failed with 0x%08X\n", status);
         return status;
     }
 
@@ -100,33 +102,27 @@ NTSTATUS DualDeskEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit) {
     KeInitializeSpinLock(&context->DeviceListLock);
     InitializeListHead(&context->DeviceListHead);
 
-    // Create symbolic link for user-mode communication
-    RtlInitUnicodeString(&symbolicLink, L"\\??\\DualDeskDriver");
+    // CREATE SYMBOLIC LINK FOR USER-MODE COMMUNICATION
+    RtlInitUnicodeString(&symbolicLink, L"\\??\\DualDesk");
     status = WdfDeviceCreateSymbolicLink(device, &symbolicLink);
 
     if (!NT_SUCCESS(status)) {
-        KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,
-            "DualDesk Driver: WdfDeviceCreateSymbolicLink failed with 0x%08X\n", status);
-        // Continue anyway - not fatal
+        DbgPrint("DualDesk: WdfDeviceCreateSymbolicLink failed with 0x%08X\n", status);
     } else {
-        KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-            "DualDesk Driver: Symbolic link created: \\??\\DualDeskDriver\n");
+        DbgPrint("DualDesk: Symbolic link created: \\??\\DualDesk\n");
     }
 
-    // Create default IO queue
+    // CREATE IO QUEUE WITH IOCTL HANDLER
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
     queueConfig.EvtIoDeviceControl = DualDeskEvtIoDeviceControl;
 
     status = WdfIoQueueCreate(device, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES, &context->IoQueue);
     if (!NT_SUCCESS(status)) {
-        KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
-            "DualDesk Driver: WdfIoQueueCreate failed with 0x%08X\n", status);
+        DbgPrint("DualDesk: WdfIoQueueCreate failed with 0x%08X\n", status);
         return status;
     }
 
-    KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-        "DualDesk Driver: EvtDeviceAdd completed successfully\n");
-
+    DbgPrint("DualDesk: EvtDeviceAdd completed successfully\n");
     return STATUS_SUCCESS;
 }
 
@@ -137,9 +133,6 @@ VOID DualDeskEvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request,
     WDFDEVICE device = WdfIoQueueGetDevice(Queue);
     PDEVICE_CONTEXT context = DualDeskGetDeviceContext(device);
     NTSTATUS status = STATUS_INVALID_DEVICE_REQUEST;
-
-    KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-        "DualDesk Driver: IOCTL 0x%08X received\n", IoControlCode);
 
     switch (IoControlCode) {
         case IOCTL_DUALDESK_GET_STATS: {
@@ -153,12 +146,27 @@ VOID DualDeskEvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request,
                                                     (PVOID*)&output, NULL);
             if (!NT_SUCCESS(status)) break;
 
-            // Fill statistics
-            output->TotalDevices = 0; // Count devices from list
+            output->TotalDevices = 0;
             output->TotalEventsRouted = context->TotalEventsRouted;
             output->TotalEventsBlocked = context->TotalEventsBlocked;
             KeQuerySystemTime(&output->DriverStartTime);
 
+            status = STATUS_SUCCESS;
+            break;
+        }
+
+        case IOCTL_DUALDESK_ASSIGN_DEVICE_TO_WORKSPACE: {
+            if (InputBufferLength < sizeof(DUALDESK_ASSIGN_DEVICE_INPUT)) {
+                status = STATUS_BUFFER_TOO_SMALL;
+                break;
+            }
+
+            PDUALDESK_ASSIGN_DEVICE_INPUT input = NULL;
+            status = WdfRequestRetrieveInputBuffer(Request, sizeof(DUALDESK_ASSIGN_DEVICE_INPUT),
+                                                   (PVOID*)&input, NULL);
+            if (!NT_SUCCESS(status)) break;
+
+            DbgPrint("DualDesk: Device assigned to workspace %lu\n", input->WorkspaceId);
             status = STATUS_SUCCESS;
             break;
         }
@@ -169,38 +177,10 @@ VOID DualDeskEvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request,
     }
 
     WdfRequestComplete(Request, status);
-
-    // Add to the IOCTL switch statement in DualDeskEvtIoDeviceControl
-case IOCTL_DUALDESK_ASSIGN_DEVICE_TO_WORKSPACE: {
-    if (InputBufferLength < sizeof(DUALDESK_ASSIGN_DEVICE_INPUT)) {
-        status = STATUS_BUFFER_TOO_SMALL;
-        break;
-    }
-
-    PDUALDESK_ASSIGN_DEVICE_INPUT input = NULL;
-    status = WdfRequestRetrieveInputBuffer(
-        Request,
-        sizeof(DUALDESK_ASSIGN_DEVICE_INPUT),
-        (PVOID*)&input,
-        NULL
-    );
-    if (!NT_SUCCESS(status)) break;
-
-    // Store the assignment for this device
-    // Implementation depends on your driver design
-    
-    KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-        "DualDesk Driver: Device assigned to workspace %lu\n", input->WorkspaceId);
-    
-    status = STATUS_SUCCESS;
-    break;
-}
 }
 
 // Driver unload
 VOID DualDeskEvtDriverUnload(WDFDRIVER Driver) {
     UNREFERENCED_PARAMETER(Driver);
-
-    KdPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-        "DualDesk Driver: Unloading\n");
+    DbgPrint("DualDesk: Unloading\n");
 }
