@@ -302,12 +302,15 @@ void AssignDeviceToWorkspace(HANDLE deviceHandle, DWORD workspaceId) {
             g_deviceWorkspaceMap[deviceHandle] = workspaceId;
             std::string msg = "Device assigned to workspace " + std::to_string(workspaceId);
             g_lastEvent = msg;
+            LOG_INFO(msg.c_str());
+            
+            // FORCE REFRESH
             RefreshTree();
             UpdateStatusBar();
+            InvalidateRect(g_treeView, NULL, TRUE);
         }
     }
 }
-
 bool CheckForChanges() {
     bool changed = false;
     
@@ -396,55 +399,35 @@ void RefreshTree() {
     item.pszText = const_cast<LPWSTR>(workspaceLabel.c_str());
     TreeView_SetItem(g_treeView, &item);
 
-    // --- Windows ---
-    ClearChildren(g_nodeWindows);
-    int windowCount = 0;
     
-    if (g_displayManager) {
-        EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-            int* count = reinterpret_cast<int*>(lParam);
-            
-            if (!IsWindowTrackable(hwnd)) return TRUE;
-            
-            std::wstring title = GetWindowTitle(hwnd);
-            std::wstring cls = GetWindowClassName(hwnd);
-            
-            if (!title.empty()) {
-                std::wstringstream label;
-                label << title;
-                
-                if (!cls.empty() && cls != L"") {
-                    label << L"  [" << cls << L"]";
-                }
-                
-                HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-                MONITORINFO mi = {sizeof(MONITORINFO)};
-                if (GetMonitorInfo(monitor, &mi)) {
-                    int monitorIndex = 1;
-                    if (g_displayManager) {
-                        auto monitors = g_displayManager->EnumerateDisplays();
-                        for (size_t i = 0; i < monitors.size(); ++i) {
-                            if (monitors[i].monitor == monitor) {
-                                monitorIndex = (int)i + 1;
-                                break;
-                            }
-                        }
-                    }
-                    label << L"  (Monitor " << monitorIndex << L")";
-                }
-                
-                AddNode(g_nodeWindows, label.str(), ICON_WINDOW, false);
-                (*count)++;
-            }
-            return TRUE;
-        }, reinterpret_cast<LPARAM>(&windowCount));
+ // --- Workspaces ---
+ClearChildren(g_nodeWorkspaces);
+int workspaceCount = 0;
+if (g_workspaceManager) {
+    auto workspaces = g_workspaceManager->GetAllWorkspaces();
+    workspaceCount = (int)workspaces.size();
+    for (auto* ws : workspaces) {
+        std::wstringstream label;
+        label << ToWide(ws->GetName()) << L"  \u2014  "
+              << ws->GetWindowCount() << L" window"
+              << (ws->GetWindowCount() == 1 ? L"" : L"s");
+        
+        // Count devices assigned to this workspace
+        int deviceCount = 0;
+        for (const auto& [handle, wsId] : g_deviceWorkspaceMap) {
+            if (wsId == ws->GetId()) deviceCount++;
+        }
+        if (deviceCount > 0) {
+            label << L"  (" << deviceCount << L" devices)";
+        }
+        
+        AddNode(g_nodeWorkspaces, label.str(), ICON_WORKSPACE, false);
     }
-    
-    std::wstring windowLabel = L"Windows (" + std::to_wstring(windowCount) + L")";
-    item.hItem = g_nodeWindows;
-    item.pszText = const_cast<LPWSTR>(windowLabel.c_str());
-    TreeView_SetItem(g_treeView, &item);
-
+}
+std::wstring workspaceLabel = L"Workspaces (" + std::to_wstring(workspaceCount) + L")";
+item.hItem = g_nodeWorkspaces;
+item.pszText = const_cast<LPWSTR>(workspaceLabel.c_str());
+TreeView_SetItem(g_treeView, &item);
     // --- Devices ---
     ClearChildren(g_nodeDevices);
     int deviceCount = 0;
@@ -789,6 +772,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (driverInterface.Open()) {
             LOG_INFO("Driver connected");
             driverInterface.SetRouteMode(1);
+            
         } else {
             LOG_WARN("Driver not available");
         }

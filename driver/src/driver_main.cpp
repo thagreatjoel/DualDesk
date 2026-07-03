@@ -184,3 +184,19 @@ VOID DualDeskEvtDriverUnload(WDFDRIVER Driver) {
     UNREFERENCED_PARAMETER(Driver);
     DbgPrint("DualDesk: Unloading\n");
 }
+
+case IOCTL_DUALDESK_SET_ROUTE_MODE: {
+    if (InputBufferLength < sizeof(ULONG)) {
+        status = STATUS_BUFFER_TOO_SMALL;
+        break;
+    }
+
+    PULONG mode = NULL;
+    status = WdfRequestRetrieveInputBuffer(Request, sizeof(ULONG), (PVOID*)&mode, NULL);
+    if (!NT_SUCCESS(status)) break;
+
+    context->RouteMode = *mode;
+    DbgPrint("DualDesk: Route mode set to %lu\n", *mode);
+    status = STATUS_SUCCESS;
+    break;
+}

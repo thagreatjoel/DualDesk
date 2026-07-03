@@ -92,4 +92,8 @@ private:
                    void* output, size_t outputSize, DWORD& bytesReturned);
 };
 
+
+#define IOCTL_DUALDESK_SET_ROUTE_MODE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, DUALDESK_IOCTL_BASE + 4, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 } // namespace dualdesk
