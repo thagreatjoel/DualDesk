@@ -22,7 +22,7 @@ bool DriverInterface::Open() {
         "\\\\.\\DualDeskDriver",
         "\\\\.\\DUALDESK",
         "\\\\.\\Global\\DualDeskDriver",
-        "\\\\.\\DualDeskFilter"  // Add this if using the new service name
+        "\\\\.\\DualDeskFilter"
     };
 
     for (const auto& path : paths) {
@@ -38,14 +38,14 @@ bool DriverInterface::Open() {
 
         if (hDriver_ != INVALID_HANDLE_VALUE) {
             std::string msg = "Connected to driver at: " + path;
-            LOG_INFO(msg.c_str());
+            LOG_INFO(msg);
             return true;
         }
     }
 
     lastError_ = GetLastError();
     std::string msg = "Failed to open driver. Error: " + std::to_string(lastError_);
-    LOG_ERROR(msg.c_str());
+    LOG_ERROR(msg);
     return false;
 }
 

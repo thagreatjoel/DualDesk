@@ -302,15 +302,15 @@ void AssignDeviceToWorkspace(HANDLE deviceHandle, DWORD workspaceId) {
             g_deviceWorkspaceMap[deviceHandle] = workspaceId;
             std::string msg = "Device assigned to workspace " + std::to_string(workspaceId);
             g_lastEvent = msg;
-            LOG_INFO(msg.c_str());
+            LOG_INFO(msg);
             
-            // FORCE REFRESH
             RefreshTree();
             UpdateStatusBar();
             InvalidateRect(g_treeView, NULL, TRUE);
         }
     }
 }
+
 bool CheckForChanges() {
     bool changed = false;
     
@@ -359,6 +359,8 @@ bool CheckForChanges() {
 void RefreshTree() {
     if (!g_treeView || g_refreshPaused) return;
 
+    TVITEMW item = {0};
+
     // --- Monitors ---
     ClearChildren(g_nodeMonitors);
     int monitorCount = 0;
@@ -374,7 +376,6 @@ void RefreshTree() {
         }
     }
     std::wstring monitorLabel = L"Monitors (" + std::to_wstring(monitorCount) + L")";
-    TVITEMW item = {0};
     item.mask = TVIF_TEXT | TVIF_HANDLE;
     item.hItem = g_nodeMonitors;
     item.pszText = const_cast<LPWSTR>(monitorLabel.c_str());
@@ -387,10 +388,21 @@ void RefreshTree() {
         auto workspaces = g_workspaceManager->GetAllWorkspaces();
         workspaceCount = (int)workspaces.size();
         for (auto* ws : workspaces) {
+            int windowCount = ws->GetWindowCount();
+            
             std::wstringstream label;
             label << ToWide(ws->GetName()) << L"  \u2014  "
-                  << ws->GetWindowCount() << L" window"
-                  << (ws->GetWindowCount() == 1 ? L"" : L"s");
+                  << windowCount << L" window"
+                  << (windowCount == 1 ? L"" : L"s");
+            
+            int deviceCount = 0;
+            for (const auto& pair : g_deviceWorkspaceMap) {
+                if (pair.second == ws->GetId()) deviceCount++;
+            }
+            if (deviceCount > 0) {
+                label << L"  (" << deviceCount << L" devices)";
+            }
+            
             AddNode(g_nodeWorkspaces, label.str(), ICON_WORKSPACE, false);
         }
     }
@@ -399,35 +411,23 @@ void RefreshTree() {
     item.pszText = const_cast<LPWSTR>(workspaceLabel.c_str());
     TreeView_SetItem(g_treeView, &item);
 
+    // --- Windows ---
+    ClearChildren(g_nodeWindows);
+    int windowCount = 0;
     
- // --- Workspaces ---
-ClearChildren(g_nodeWorkspaces);
-int workspaceCount = 0;
-if (g_workspaceManager) {
-    auto workspaces = g_workspaceManager->GetAllWorkspaces();
-    workspaceCount = (int)workspaces.size();
-    for (auto* ws : workspaces) {
-        std::wstringstream label;
-        label << ToWide(ws->GetName()) << L"  \u2014  "
-              << ws->GetWindowCount() << L" window"
-              << (ws->GetWindowCount() == 1 ? L"" : L"s");
-        
-        // Count devices assigned to this workspace
-        int deviceCount = 0;
-        for (const auto& [handle, wsId] : g_deviceWorkspaceMap) {
-            if (wsId == ws->GetId()) deviceCount++;
+    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+        int* count = reinterpret_cast<int*>(lParam);
+        if (IsWindowTrackable(hwnd)) {
+            (*count)++;
         }
-        if (deviceCount > 0) {
-            label << L"  (" << deviceCount << L" devices)";
-        }
-        
-        AddNode(g_nodeWorkspaces, label.str(), ICON_WORKSPACE, false);
-    }
-}
-std::wstring workspaceLabel = L"Workspaces (" + std::to_wstring(workspaceCount) + L")";
-item.hItem = g_nodeWorkspaces;
-item.pszText = const_cast<LPWSTR>(workspaceLabel.c_str());
-TreeView_SetItem(g_treeView, &item);
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&windowCount));
+    
+    std::wstring windowLabel = L"Windows (" + std::to_wstring(windowCount) + L")";
+    item.hItem = g_nodeWindows;
+    item.pszText = const_cast<LPWSTR>(windowLabel.c_str());
+    TreeView_SetItem(g_treeView, &item);
+
     // --- Devices ---
     ClearChildren(g_nodeDevices);
     int deviceCount = 0;
@@ -529,6 +529,17 @@ void LayoutControls(HWND hwnd) {
 
 void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
     HTREEITEM selected = TreeView_GetSelection(g_treeView);
+    if (!selected) {
+        TVHITTESTINFO hit = {0};
+        hit.pt = pt;
+        MapWindowPoints(hwnd, g_treeView, &hit.pt, 1);
+        TreeView_HitTest(g_treeView, &hit);
+        if (hit.flags & TVHT_ONITEM) {
+            selected = hit.hItem;
+            TreeView_SelectItem(g_treeView, selected);
+        }
+    }
+    
     if (!selected) return;
     
     HTREEITEM parent = TreeView_GetParent(g_treeView, selected);
@@ -767,12 +778,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
         auto workspaces = workspaceManager.GetAllWorkspaces();
         std::string logMsg = "Number of workspaces: " + std::to_string(workspaces.size());
-        LOG_INFO(logMsg.c_str());
-        
+        LOG_INFO(logMsg);
+
         if (driverInterface.Open()) {
             LOG_INFO("Driver connected");
             driverInterface.SetRouteMode(1);
-            
         } else {
             LOG_WARN("Driver not available");
         }
@@ -903,7 +913,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     catch (const std::exception& e) {
         std::string errMsg = "Unhandled exception: ";
         errMsg += e.what();
-        LOG_ERROR(errMsg.c_str());
+        LOG_ERROR(errMsg);
         std::string errMsg2 = "Fatal error: ";
         errMsg2 += e.what();
         MessageBoxA(NULL, 

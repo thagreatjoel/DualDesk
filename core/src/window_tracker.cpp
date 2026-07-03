@@ -28,7 +28,6 @@ std::vector<WindowInfo> WindowTracker::GetAllWindows() {
     windows_.clear();
     EnumWindows(EnumWindowsProc, (LPARAM)this);
     
-    // Fixed: Use string concatenation instead of formatting
     std::string msg = "Found " + std::to_string(windows_.size()) + " trackable windows";
     LOG_INFO(msg);
     
@@ -73,20 +72,16 @@ BOOL CALLBACK WindowTracker::EnumWindowsProc(HWND hwnd, LPARAM lParam) {
 }
 
 bool WindowTracker::IsWindowTrackable(HWND hwnd) {
-    // Must be visible
     if (!IsWindowVisible(hwnd)) return false;
     
-    // Must have a title
     wchar_t title[256];
     if (GetWindowTextW(hwnd, title, 256) == 0) return false;
     if (wcslen(title) == 0) return false;
     
-    // Skip system windows
     wchar_t className[256];
     GetClassNameW(hwnd, className, 256);
     std::wstring cls = className;
     
-    // Skip common system windows
     if (cls == L"Progman" || cls == L"WorkerW" || 
         cls == L"Shell_TrayWnd" || cls == L"Button") {
         return false;
@@ -106,7 +101,6 @@ std::vector<WindowInfo> WindowTracker::GetWindowsOnMonitor(HMONITOR monitor) {
         }
     }
     
-    // Build log message
     std::string msg = "Found " + std::to_string(result.size()) + " windows on this monitor";
     LOG_INFO(msg);
     

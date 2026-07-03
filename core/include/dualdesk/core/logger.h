@@ -4,11 +4,14 @@
 #include <fstream>
 #include <iostream>
 #include <chrono>
-#include <iomanip>
-#include <mutex>
 #include <ctime>
+#include <mutex>
 
 namespace dualdesk {
+
+enum class LogLevel {
+    Trace, Debug, Info, Warn, Error, Critical
+};
 
 class Logger {
 public:
@@ -17,39 +20,28 @@ public:
         getLogFilePath() = path;
     }
 
-    static void Info(const std::string& msg) {
-        Log("INFO", msg);
-    }
-
-    static void Debug(const std::string& msg) {
-        Log("DEBUG", msg);
-    }
-
-    static void Error(const std::string& msg) {
-        Log("ERROR", msg);
-    }
-
-    static void Warn(const std::string& msg) {
-        Log("WARN", msg);
-    }
-
-private:
-    static void Log(const std::string& level, const std::string& msg) {
+    static void Log(LogLevel level, const std::string& msg) {
         std::lock_guard<std::mutex> lock(getMutex());
         
+        std::string levelStr;
+        switch (level) {
+            case LogLevel::Info: levelStr = "INFO"; break;
+            case LogLevel::Debug: levelStr = "DEBUG"; break;
+            case LogLevel::Warn: levelStr = "WARN"; break;
+            case LogLevel::Error: levelStr = "ERROR"; break;
+            case LogLevel::Critical: levelStr = "CRITICAL"; break;
+            default: levelStr = "UNKNOWN"; break;
+        }
+        
         auto now = std::chrono::system_clock::now();
-        std::time_t time_t = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()) % 1000;
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        std::string timeStr = std::ctime(&time_t);
+        timeStr.pop_back();
         
-        std::string output = std::string("[") + level + "] ";
-        output += std::to_string(time_t) + "." + std::to_string(ms.count()) + " ";
-        output += msg + "\n";
+        std::string output = "[" + levelStr + "] " + timeStr + " " + msg + "\n";
         
-        // Console
         std::cout << output;
         
-        // File
         if (!getLogFilePath().empty()) {
             std::ofstream file(getLogFilePath(), std::ios::app);
             if (file.is_open()) {
@@ -58,6 +50,7 @@ private:
         }
     }
 
+private:
     static std::mutex& getMutex() {
         static std::mutex mutex;
         return mutex;
@@ -69,10 +62,10 @@ private:
     }
 };
 
-// Convenience macros - NO circular includes!
-#define LOG_INFO(msg)   ::dualdesk::Logger::Info(msg)
-#define LOG_DEBUG(msg)  ::dualdesk::Logger::Debug(msg)
-#define LOG_ERROR(msg)  ::dualdesk::Logger::Error(msg)
-#define LOG_WARN(msg)   ::dualdesk::Logger::Warn(msg)
-
 } // namespace dualdesk
+
+// SIMPLE MACROS - NO FORMATTING
+#define LOG_INFO(msg)   ::dualdesk::Logger::Log(::dualdesk::LogLevel::Info, msg)
+#define LOG_DEBUG(msg)  ::dualdesk::Logger::Log(::dualdesk::LogLevel::Debug, msg)
+#define LOG_WARN(msg)   ::dualdesk::Logger::Log(::dualdesk::LogLevel::Warn, msg)
+#define LOG_ERROR(msg)  ::dualdesk::Logger::Log(::dualdesk::LogLevel::Error, msg)
