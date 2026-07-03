@@ -1,31 +1,33 @@
 #include "dualdesk/workspace/workspace.h"
 #include "dualdesk/core/logger.h"
-#include <sstream>
+#include <algorithm>
 
 namespace dualdesk {
 
-Workspace::Workspace(WorkspaceId id, HMONITOR monitor)
-    : id_(id), monitor_(monitor) {
-    name_ = "Workspace " + std::to_string(id);
-    LOG_DEBUG("Workspace created: " + name_);
+Workspace::Workspace(WorkspaceId id, const std::string& name, HMONITOR monitor)
+    : id_(id), monitor_(monitor), name_(name) {
+    // Use %s with .c_str() for format string
+    LOG_DEBUG("Workspace created: %s (ID: %d)", name_.c_str(), id_);
 }
 
 Workspace::~Workspace() {
-    LOG_DEBUG("Workspace destroyed: " + name_);
+    LOG_DEBUG("Workspace destroyed: %s (ID: %d)", name_.c_str(), id_);
 }
 
 void Workspace::AddWindow(HWND hwnd) {
-    if (hwnd == nullptr) return;
+    if (!hwnd) return;
+    if (windows_.find(hwnd) != windows_.end()) return;
     windows_.insert(hwnd);
-    std::string msg = "Window added to workspace " + name_ + ": " + std::to_string((long long)hwnd);
-    LOG_DEBUG(msg);
+    LOG_DEBUG("Window added to workspace %s", name_.c_str());
 }
 
 void Workspace::RemoveWindow(HWND hwnd) {
-    if (hwnd == nullptr) return;
-    windows_.erase(hwnd);
-    std::string msg = "Window removed from workspace " + name_ + ": " + std::to_string((long long)hwnd);
-    LOG_DEBUG(msg);
+    if (!hwnd) return;
+    auto it = windows_.find(hwnd);
+    if (it != windows_.end()) {
+        windows_.erase(it);
+        LOG_DEBUG("Window removed from workspace %s", name_.c_str());
+    }
 }
 
 bool Workspace::HasWindow(HWND hwnd) const {
@@ -47,12 +49,6 @@ std::vector<WindowInfo> Workspace::GetWindows() const {
         if (GetClassNameW(hwnd, className, 256)) {
             info.className = className;
         }
-        
-        GetWindowRect(hwnd, &info.position);
-        info.isVisible = IsWindowVisible(hwnd);
-        info.isMinimized = IsIconic(hwnd) != 0;
-        info.isMaximized = IsZoomed(hwnd) != 0;
-        
         result.push_back(info);
     }
     return result;
@@ -60,33 +56,29 @@ std::vector<WindowInfo> Workspace::GetWindows() const {
 
 void Workspace::ClearWindows() {
     windows_.clear();
-    LOG_DEBUG("All windows cleared from workspace " + name_);
+    LOG_DEBUG("All windows cleared from workspace %s", name_.c_str());
 }
 
 void Workspace::Activate() {
-    if (isActive_) return;
     isActive_ = true;
-    LOG_INFO("Workspace activated: " + name_);
+    LOG_DEBUG("Workspace activated: %s", name_.c_str());
 }
 
 void Workspace::Deactivate() {
-    if (!isActive_) return;
     isActive_ = false;
-    LOG_INFO("Workspace deactivated: " + name_);
+    LOG_DEBUG("Workspace deactivated: %s", name_.c_str());
 }
 
 void Workspace::MoveAllWindowsToWorkspace(const Workspace& target) {
-    LOG_INFO("Moving all windows from " + name_ + " to " + target.GetName());
+    LOG_WARN("MoveAllWindowsToWorkspace not implemented");
 }
 
 void Workspace::BringToFront() {
     for (HWND hwnd : windows_) {
-        if (IsWindow(hwnd) && IsWindowVisible(hwnd)) {
-            SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, 
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-        }
+        SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, 
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
-    LOG_INFO("Workspace brought to front: " + name_);
+    LOG_DEBUG("Workspace brought to front: %s", name_.c_str());
 }
 
 } // namespace dualdesk

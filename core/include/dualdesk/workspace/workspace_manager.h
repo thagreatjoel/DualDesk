@@ -19,6 +19,9 @@ public:
     bool Initialize(DisplayManager* displayManager, InputManager* inputManager);
     void Shutdown();
 
+    // ===== ADD THIS LINE =====
+    Workspace* CreateWorkspace(const std::string& name, HMONITOR monitor);  // ← ADD THIS
+    
     void CreateWorkspaces();
     void DestroyWorkspaces();
     

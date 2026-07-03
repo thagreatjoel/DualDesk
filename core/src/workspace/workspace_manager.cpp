@@ -41,38 +41,40 @@ void WorkspaceManager::Shutdown() {
     LOG_INFO("WorkspaceManager shutdown");
 }
 
-void WorkspaceManager::CreateWorkspaces() {
-    workspaces_.clear();
-    currentWorkspaceId_ = 0;
+// ===== ADD THIS FUNCTION =====
+Workspace* WorkspaceManager::CreateWorkspace(const std::string& name, HMONITOR monitor) {
+    WorkspaceId id = GenerateWorkspaceId();
+    auto workspace = std::make_unique<Workspace>(id, name, monitor);
+    Workspace* ptr = workspace.get();
+    workspaces_[id] = std::move(workspace);
+    
+    std::string msg = "Created workspace: " + name + " (ID: " + std::to_string(id) + ")";
+    LOG_INFO(msg);
+    return ptr;
+}
+// ===== END OF ADDED FUNCTION =====
 
+// Fix the CreateWorkspaces function to use correct names
+void WorkspaceManager::CreateWorkspaces() {
+    if (!displayManager_) return;
+    
     auto monitors = displayManager_->EnumerateDisplays();
     
-    if (monitors.empty()) {
-        LOG_WARN("No monitors found, creating default workspace");
+    // Clear existing workspaces first
+    DestroyWorkspaces();
+    
+    for (size_t i = 0; i < monitors.size(); ++i) {
+        // Create workspace with proper name: "Workspace A", "Workspace B", etc.
+        std::string name = "Workspace ";
+        name += static_cast<char>('A' + i);
+        
         WorkspaceId id = GenerateWorkspaceId();
-        auto workspace = std::make_unique<Workspace>(id, nullptr);
-        workspace->SetName("Default Workspace");
+        auto workspace = std::make_unique<Workspace>(id, name, monitors[i].monitor);
         workspaces_[id] = std::move(workspace);
-        currentWorkspaceId_ = id;
-        return;
-    }
-
-    for (const auto& display : monitors) {
-        WorkspaceId id = GenerateWorkspaceId();
-        auto workspace = std::make_unique<Workspace>(id, display.monitor);
-        std::string name = "Monitor " + std::to_string(display.Width()) + "x" + std::to_string(display.Height());
-        workspace->SetName(name);
-        workspaces_[id] = std::move(workspace);
-    }
-
-    if (!workspaces_.empty()) {
-        currentWorkspaceId_ = workspaces_.begin()->first;
-        workspaces_[currentWorkspaceId_]->Activate();
-        std::string msg = "Active workspace: " + workspaces_[currentWorkspaceId_]->GetName();
+        
+        std::string msg = "Created workspace: " + name + " (ID: " + std::to_string(id) + ")";
         LOG_INFO(msg);
     }
-
-    AssignWindowsToWorkspaces();
 }
 
 void WorkspaceManager::DestroyWorkspaces() {

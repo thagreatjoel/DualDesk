@@ -72,8 +72,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\driver_main.cpp" />
-    <ClCompile Include="src\driver_device.cpp" />
-    <ClCompile Include="src\driver_queue.cpp" />
     <ClCompile Include="src\driver_filter.cpp" />
   </ItemGroup>
   <ItemGroup>

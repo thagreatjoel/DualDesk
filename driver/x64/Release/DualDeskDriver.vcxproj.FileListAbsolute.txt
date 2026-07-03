@@ -1,1 +1,0 @@
-C:\Users\VICTUS\DualDesk\driver\x64\Release\DualDeskDriver.sys

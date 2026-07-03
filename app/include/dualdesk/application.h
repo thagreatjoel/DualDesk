@@ -2,38 +2,32 @@
 
 #include <windows.h>
 #include <memory>
+#include <string>
 
 namespace dualdesk {
 
-// Forward declaration
 class DriverInterface;
 
-/**
- * @brief Main application class for DualDesk
- */
 class Application {
 public:
-    Application(HINSTANCE hInstance, int argc, wchar_t* argv[]);
+    Application(HINSTANCE hInstance, int argc = 0, wchar_t* argv[] = nullptr);
     ~Application();
 
     int Run();
     void Shutdown();
 
 private:
-    HINSTANCE instance_handle_;
-    HWND main_window_ = nullptr;
-    bool is_running_ = false;
-    
-    // Driver interface
-    std::unique_ptr<DriverInterface> driverInterface_;
-
-    void Initialize();
-    void InitializeModules();  // <-- ADD THIS
+    void InitializeModules();
     void CreateMainWindow();
     void Cleanup();
 
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
     LRESULT HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam);
+
+    HINSTANCE instance_handle_ = nullptr;
+    HWND main_window_ = nullptr;
+    std::unique_ptr<DriverInterface> driverInterface_;
+    bool is_running_ = false;
 };
 
 } // namespace dualdesk

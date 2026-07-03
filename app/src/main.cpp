@@ -54,6 +54,14 @@ int g_cachedWindowCount = -1;
 int g_cachedDeviceCount = -1;
 bool g_cachedDriverState = false;
 
+// Window monitor tracking
+std::map<HWND, HMONITOR> g_lastWindowMonitorMap;
+
+struct CallbackData {
+    int* count;
+    std::vector<HWND>* windows;
+};
+
 // Icon indices
 enum IconIndex {
     ICON_FOLDER = 0,
@@ -68,10 +76,9 @@ enum IconIndex {
     ICON_COUNT
 };
 
-// Forward declarations
+// ===== FORWARD DECLARATIONS =====
 LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK InputWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-void UpdateStatusWindow();
 void BuildTree(HWND parent);
 void RefreshTree();
 void LayoutControls(HWND hwnd);
@@ -79,6 +86,9 @@ void UpdateStatusBar();
 void ShowDeviceContextMenu(HWND hwnd, POINT pt);
 void AssignDeviceToWorkspace(HANDLE deviceHandle, DWORD workspaceId);
 bool CheckForChanges();
+void TrackWindowMonitors();
+void ForceRefresh();
+void DebugPrintAssignment(const std::string& msg);  // ← FORWARD DECLARATION
 
 // ===================== DEVICE IDENTIFICATION =====================
 
@@ -191,6 +201,36 @@ bool IsDriverConnected() {
     return false;
 }
 
+// ===== DebugPrintAssignment IMPLEMENTATION =====
+void DebugPrintAssignment(const std::string& msg) {
+    std::string fullMsg = "[ASSIGNMENT] " + msg;
+    LOG_DEBUG("%s", fullMsg.c_str());
+    OutputDebugStringA((fullMsg + "\n").c_str());
+}
+// Add this after DebugPrintAssignment (around line 200)
+void TestDriverCommunication() {
+    DebugPrintAssignment("=== Testing Driver Communication ===");
+    
+    if (!g_driverInterface) {
+        DebugPrintAssignment("ERROR: Driver interface is NULL!");
+        return;
+    }
+    
+    bool isConnected = g_driverInterface->IsConnected();
+    DebugPrintAssignment("IsConnected: " + std::string(isConnected ? "YES" : "NO"));
+    
+    if (!isConnected) {
+        DebugPrintAssignment("Attempting to open driver...");
+        bool opened = g_driverInterface->Open();
+        DebugPrintAssignment("Open result: " + std::string(opened ? "SUCCESS" : "FAILED"));
+    }
+    
+    // Get device count
+    ULONG count = g_driverInterface->GetDeviceCount();
+    DebugPrintAssignment("Driver device count: " + std::to_string(count));
+    
+    DebugPrintAssignment("=== Test Complete ===");
+}
 // ===================== TREE VIEW FUNCTIONS =====================
 
 void BuildImageList() {
@@ -296,19 +336,97 @@ bool IsWindowTrackable(HWND hwnd) {
     return true;
 }
 
+void ForceRefresh() {
+    g_lastEvent = "Manual refresh";
+    RefreshTree();
+    UpdateStatusBar();
+}
+
 void AssignDeviceToWorkspace(HANDLE deviceHandle, DWORD workspaceId) {
-    if (g_driverInterface && g_driverInterface->IsConnected()) {
-        if (g_driverInterface->AssignDeviceToWorkspace(deviceHandle, workspaceId)) {
-            g_deviceWorkspaceMap[deviceHandle] = workspaceId;
-            std::string msg = "Device assigned to workspace " + std::to_string(workspaceId);
-            g_lastEvent = msg;
-            LOG_INFO(msg);
-            
-            RefreshTree();
-            UpdateStatusBar();
-            InvalidateRect(g_treeView, NULL, TRUE);
+    DebugPrintAssignment("========================================");
+    DebugPrintAssignment("AssignDeviceToWorkspace called");
+    DebugPrintAssignment("  Device Handle: " + std::to_string((uintptr_t)deviceHandle));
+    DebugPrintAssignment("  Workspace ID: " + std::to_string(workspaceId));
+    
+    // Check if driver interface exists
+    if (!g_driverInterface) {
+        DebugPrintAssignment("ERROR: g_driverInterface is NULL!");
+        MessageBoxA(NULL, "Driver interface is NULL. Please restart the app.", "Error", MB_OK | MB_ICONERROR);
+        return;
+    }
+    
+    // Check if driver is connected
+    bool isConnected = g_driverInterface->IsConnected();
+    DebugPrintAssignment("  Driver IsConnected: " + std::string(isConnected ? "YES" : "NO"));
+    
+    if (!isConnected) {
+        DebugPrintAssignment("Attempting to reconnect to driver...");
+        if (g_driverInterface->Open()) {
+            DebugPrintAssignment("Reconnected to driver successfully!");
+            isConnected = true;
+        } else {
+            DebugPrintAssignment("FAILED to reconnect to driver!");
+            MessageBoxA(NULL, 
+                "Driver not connected!\n\n"
+                "Please make sure the DualDesk driver is installed and running.\n\n"
+                "Run as Administrator:\n"
+                "sc start DualDesk",
+                "Driver Error", MB_OK | MB_ICONERROR);
+            return;
         }
     }
+    
+    // Try to assign the device
+    DebugPrintAssignment("Calling g_driverInterface->AssignDeviceToWorkspace()...");
+    bool result = g_driverInterface->AssignDeviceToWorkspace(deviceHandle, workspaceId);
+    DebugPrintAssignment("  Result: " + std::string(result ? "SUCCESS" : "FAILED"));
+    
+    if (result) {
+        // Update local map
+        g_deviceWorkspaceMap[deviceHandle] = workspaceId;
+        
+        char letter = 'A' + (char)workspaceId;
+        std::string msg = "Device assigned to Workspace " + std::string(1, letter);
+        g_lastEvent = msg;
+        LOG_INFO("%s", msg.c_str());
+        DebugPrintAssignment("  ✅ Assignment successful: " + msg);
+        
+        RefreshTree();
+        UpdateStatusBar();
+        
+        InvalidateRect(g_treeView, NULL, TRUE);
+        RedrawWindow(g_treeView, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE);
+        
+        // Show success message
+        std::string successMsg = "✅ " + msg;
+        MessageBoxA(g_statusWindow, successMsg.c_str(), "Success", MB_OK | MB_ICONINFORMATION);
+    } else {
+        DebugPrintAssignment("  ❌ Assignment FAILED!");
+        
+        // Try to get more info
+        ULONG currentWorkspace = g_driverInterface->GetWorkspaceForDevice(deviceHandle);
+        DebugPrintAssignment("  Current workspace from driver: " + std::to_string(currentWorkspace));
+        
+        // Check if device handle is valid
+        if (deviceHandle == INVALID_HANDLE_VALUE || deviceHandle == nullptr) {
+            MessageBoxA(NULL, 
+                "Invalid device handle!\n\n"
+                "The device handle is invalid. Please try again.",
+                "Error", MB_OK | MB_ICONERROR);
+            return;
+        }
+        
+        MessageBoxA(NULL, 
+            "Failed to assign device to workspace!\n\n"
+            "Possible reasons:\n"
+            "1. The driver may not support this device\n"
+            "2. The workspace ID may be invalid\n"
+            "3. The driver may need to be restarted\n\n"
+            "Check DebugView for more details.",
+            "Assignment Failed", MB_OK | MB_ICONERROR);
+    }
+    
+    DebugPrintAssignment("========================================");
 }
 
 bool CheckForChanges() {
@@ -325,17 +443,44 @@ bool CheckForChanges() {
     }
     
     int windowCount = 0;
+    std::vector<HWND> currentWindows;
+    
+    CallbackData cbData;
+    cbData.count = &windowCount;
+    cbData.windows = &currentWindows;
+    
     EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-        int* count = reinterpret_cast<int*>(lParam);
+        CallbackData* pData = reinterpret_cast<CallbackData*>(lParam);
         if (IsWindowTrackable(hwnd)) {
-            (*count)++;
+            (*pData->count)++;
+            pData->windows->push_back(hwnd);
         }
         return TRUE;
-    }, reinterpret_cast<LPARAM>(&windowCount));
+    }, reinterpret_cast<LPARAM>(&cbData));
+    
     if (windowCount != g_cachedWindowCount) {
         g_cachedWindowCount = windowCount;
         changed = true;
     }
+    
+    std::map<HWND, HMONITOR> currentMonitorMap;
+    for (HWND hwnd : currentWindows) {
+        HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        currentMonitorMap[hwnd] = monitor;
+    }
+    
+    if (g_lastWindowMonitorMap.size() != currentMonitorMap.size()) {
+        changed = true;
+    } else {
+        for (const auto& pair : currentMonitorMap) {
+            auto it = g_lastWindowMonitorMap.find(pair.first);
+            if (it == g_lastWindowMonitorMap.end() || it->second != pair.second) {
+                changed = true;
+                break;
+            }
+        }
+    }
+    g_lastWindowMonitorMap = currentMonitorMap;
     
     int deviceCount = 0;
     if (g_inputManager) {
@@ -354,6 +499,37 @@ bool CheckForChanges() {
     }
     
     return changed;
+}
+
+void TrackWindowMonitors() {
+    std::map<HWND, HMONITOR> currentMap;
+    
+    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+        auto* map = reinterpret_cast<std::map<HWND, HMONITOR>*>(lParam);
+        if (IsWindowTrackable(hwnd)) {
+            HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            (*map)[hwnd] = monitor;
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&currentMap));
+    
+    bool changed = false;
+    for (const auto& pair : currentMap) {
+        auto it = g_lastWindowMonitorMap.find(pair.first);
+        if (it == g_lastWindowMonitorMap.end() || it->second != pair.second) {
+            changed = true;
+            break;
+        }
+    }
+    
+    if (changed) {
+        g_lastEvent = "Window moved between monitors";
+        g_lastWindowMonitorMap = currentMap;
+        RefreshTree();
+        UpdateStatusBar();
+    } else {
+        g_lastWindowMonitorMap = currentMap;
+    }
 }
 
 void RefreshTree() {
@@ -387,11 +563,31 @@ void RefreshTree() {
     if (g_workspaceManager) {
         auto workspaces = g_workspaceManager->GetAllWorkspaces();
         workspaceCount = (int)workspaces.size();
+        
+        std::vector<HWND> windows;
+        EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+            auto* vec = reinterpret_cast<std::vector<HWND>*>(lParam);
+            if (IsWindowTrackable(hwnd)) {
+                vec->push_back(hwnd);
+            }
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&windows));
+        
         for (auto* ws : workspaces) {
-            int windowCount = ws->GetWindowCount();
+            int windowCount = 0;
+            HMONITOR wsMonitor = ws->GetMonitor();
+            for (HWND hwnd : windows) {
+                HMONITOR hwndMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                if (hwndMonitor == wsMonitor) {
+                    windowCount++;
+                }
+            }
+            
+            int wsId = ws->GetId();
+            char letter = 'A' + (char)wsId;
             
             std::wstringstream label;
-            label << ToWide(ws->GetName()) << L"  \u2014  "
+            label << L"Workspace " << letter << L"  \u2014  "
                   << windowCount << L" window"
                   << (windowCount == 1 ? L"" : L"s");
             
@@ -431,9 +627,13 @@ void RefreshTree() {
     // --- Devices ---
     ClearChildren(g_nodeDevices);
     int deviceCount = 0;
-    
+
+    DebugPrintAssignment("RefreshTree: Rebuilding Devices node...");
+
     if (g_inputManager) {
         auto keyboards = g_inputManager->GetKeyboards();
+        DebugPrintAssignment("Found " + std::to_string(keyboards.size()) + " keyboards");
+        
         int kbIndex = 1;
         for (const auto& kb : keyboards) {
             std::string cleanName = GetCleanDeviceName(kb.deviceName);
@@ -447,16 +647,34 @@ void RefreshTree() {
             }
             
             auto it = g_deviceWorkspaceMap.find(kb.deviceHandle);
+            DebugPrintAssignment("Keyboard handle=" + std::to_string((uintptr_t)kb.deviceHandle) + ", found in map=" + (it != g_deviceWorkspaceMap.end() ? "YES" : "NO"));
+            
             if (it != g_deviceWorkspaceMap.end()) {
-                label += L"  → Workspace " + std::to_wstring(it->second);
+                int wsId = it->second;
+                char letter = 'A' + (char)wsId;
+                label += L"  → Workspace " + std::wstring(1, letter);
+                DebugPrintAssignment("Keyboard assigned to Workspace " + std::string(1, letter));
+            } else {
+                DebugPrintAssignment("Keyboard NOT assigned");
             }
             
-            AddNode(g_nodeDevices, label, ICON_KEYBOARD, false);
+            TVINSERTSTRUCTW tvi = {0};
+            tvi.hParent = g_nodeDevices;
+            tvi.hInsertAfter = TVI_LAST;
+            tvi.item.mask = TVIF_TEXT | TVIF_IMAGE | TVIF_SELECTEDIMAGE | TVIF_PARAM;
+            tvi.item.pszText = const_cast<LPWSTR>(label.c_str());
+            tvi.item.iImage = ICON_KEYBOARD;
+            tvi.item.iSelectedImage = ICON_KEYBOARD;
+            tvi.item.lParam = (LPARAM)kb.deviceHandle;
+            TreeView_InsertItem(g_treeView, &tvi);
+            
             deviceCount++;
             kbIndex++;
         }
         
         auto mice = g_inputManager->GetMice();
+        DebugPrintAssignment("Found " + std::to_string(mice.size()) + " mice");
+        
         int mouseIndex = 1;
         for (const auto& mouse : mice) {
             std::string cleanName = GetCleanDeviceName(mouse.deviceName);
@@ -476,11 +694,27 @@ void RefreshTree() {
             }
             
             auto it = g_deviceWorkspaceMap.find(mouse.deviceHandle);
+            DebugPrintAssignment("Mouse handle=" + std::to_string((uintptr_t)mouse.deviceHandle) + ", found in map=" + (it != g_deviceWorkspaceMap.end() ? "YES" : "NO"));
+            
             if (it != g_deviceWorkspaceMap.end()) {
-                label += L"  → Workspace " + std::to_wstring(it->second);
+                int wsId = it->second;
+                char letter = 'A' + (char)wsId;
+                label += L"  → Workspace " + std::wstring(1, letter);
+                DebugPrintAssignment("Mouse assigned to Workspace " + std::string(1, letter));
+            } else {
+                DebugPrintAssignment("Mouse NOT assigned");
             }
             
-            AddNode(g_nodeDevices, label, icon, false);
+            TVINSERTSTRUCTW tvi = {0};
+            tvi.hParent = g_nodeDevices;
+            tvi.hInsertAfter = TVI_LAST;
+            tvi.item.mask = TVIF_TEXT | TVIF_IMAGE | TVIF_SELECTEDIMAGE | TVIF_PARAM;
+            tvi.item.pszText = const_cast<LPWSTR>(label.c_str());
+            tvi.item.iImage = icon;
+            tvi.item.iSelectedImage = icon;
+            tvi.item.lParam = (LPARAM)mouse.deviceHandle;
+            TreeView_InsertItem(g_treeView, &tvi);
+            
             deviceCount++;
             mouseIndex++;
         }
@@ -566,6 +800,14 @@ void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
     }
     
     HANDLE deviceHandle = (HANDLE)item.lParam;
+    DebugPrintAssignment("Context menu for device handle=" + std::to_string((uintptr_t)deviceHandle));
+    
+    // Check if device handle is valid
+    if (deviceHandle == INVALID_HANDLE_VALUE || deviceHandle == nullptr) {
+        DebugPrintAssignment("ERROR: Invalid device handle!");
+        MessageBoxA(hwnd, "Invalid device handle. Please try again.", "Error", MB_OK | MB_ICONERROR);
+        return;
+    }
     
     auto workspaces = g_workspaceManager->GetAllWorkspaces();
     if (workspaces.empty()) {
@@ -573,40 +815,156 @@ void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
         return;
     }
     
+    // Get current assignment
+    DWORD currentWorkspace = 0xFFFFFFFF;
+    auto it = g_deviceWorkspaceMap.find(deviceHandle);
+    if (it != g_deviceWorkspaceMap.end()) {
+        currentWorkspace = it->second;
+        DebugPrintAssignment("Currently assigned to workspace " + std::to_string(currentWorkspace));
+    } else {
+        DebugPrintAssignment("Currently NOT assigned");
+    }
+    
+    // Check if driver is connected
+    bool driverConnected = (g_driverInterface && g_driverInterface->IsConnected());
+    DebugPrintAssignment("Driver connected: " + std::string(driverConnected ? "YES" : "NO"));
+    
+    if (!driverConnected) {
+        // Try to reconnect
+        DebugPrintAssignment("Attempting to reconnect to driver...");
+        if (g_driverInterface && g_driverInterface->Open()) {
+            driverConnected = true;
+            DebugPrintAssignment("Reconnected to driver successfully!");
+        } else {
+            DebugPrintAssignment("Failed to reconnect to driver!");
+        }
+    }
+    
     HMENU hMenu = CreatePopupMenu();
     
     int menuId = 1;
     for (auto* ws : workspaces) {
-        std::wstring menuText = L"Assign to " + ToWide(ws->GetName());
-        AppendMenuW(hMenu, MF_STRING, menuId, menuText.c_str());
+        int wsId = ws->GetId();
+        char letter = 'A' + (char)wsId;
+        
+        std::wstring menuText = L"Assign to Workspace " + std::wstring(1, letter);
+        
+        UINT flags = MF_STRING;
+        if (currentWorkspace == wsId) {
+            flags |= MF_CHECKED;
+        }
+        
+        AppendMenuW(hMenu, flags, menuId, menuText.c_str());
         menuId++;
     }
     
+    if (currentWorkspace != 0xFFFFFFFF) {
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(hMenu, MF_STRING, 999, L"Remove Assignment");
+    }
+    
+    // Add debug info to menu (optional)
     AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(hMenu, MF_STRING, 999, L"Remove Assignment");
+    std::wstring debugText = L"Debug: Handle=" + std::to_wstring((uintptr_t)deviceHandle);
+    AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, debugText.c_str());
     
     int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, NULL);
     DestroyMenu(hMenu);
     
     if (cmd == 999) {
-        g_deviceWorkspaceMap.erase(deviceHandle);
-        g_lastEvent = "Device unassigned";
-        RefreshTree();
-        UpdateStatusBar();
+        // Remove assignment
+        if (driverConnected) {
+            if (g_driverInterface->UnassignDevice(deviceHandle)) {
+                g_deviceWorkspaceMap.erase(deviceHandle);
+                g_lastEvent = "Device unassigned";
+                DebugPrintAssignment("Device unassigned successfully");
+                RefreshTree();
+                UpdateStatusBar();
+            } else {
+                DebugPrintAssignment("Failed to unassign device");
+                MessageBoxA(hwnd, "Failed to unassign device.", "Error", MB_OK | MB_ICONERROR);
+            }
+        } else {
+            // Just remove from local map
+            g_deviceWorkspaceMap.erase(deviceHandle);
+            g_lastEvent = "Device unassigned (local only)";
+            DebugPrintAssignment("Device unassigned locally (driver not connected)");
+            RefreshTree();
+            UpdateStatusBar();
+        }
         return;
     }
     
     if (cmd >= 1 && cmd <= (int)workspaces.size()) {
         int workspaceIndex = cmd - 1;
         auto* ws = workspaces[workspaceIndex];
-        if (g_driverInterface && g_driverInterface->IsConnected()) {
-            if (g_driverInterface->AssignDeviceToWorkspace(deviceHandle, ws->GetId())) {
-                g_deviceWorkspaceMap[deviceHandle] = ws->GetId();
-                std::string msg = "Device assigned to " + ws->GetName();
+        DWORD workspaceId = ws->GetId();
+        char letter = 'A' + (char)workspaceId;
+        
+        DebugPrintAssignment("=== ASSIGNMENT REQUEST ===");
+        DebugPrintAssignment("Device handle: " + std::to_string((uintptr_t)deviceHandle));
+        DebugPrintAssignment("Target workspace: " + ws->GetName() + " (ID: " + std::to_string(workspaceId) + ")");
+        DebugPrintAssignment("Driver connected: " + std::string(driverConnected ? "YES" : "NO"));
+        
+        if (driverConnected) {
+            // Try to assign via driver
+            DebugPrintAssignment("Calling driver->AssignDeviceToWorkspace()...");
+            bool result = g_driverInterface->AssignDeviceToWorkspace(deviceHandle, workspaceId);
+            DebugPrintAssignment("Driver result: " + std::string(result ? "SUCCESS" : "FAILED"));
+            
+            if (result) {
+                // Update local map
+                g_deviceWorkspaceMap[deviceHandle] = workspaceId;
+                std::string msg = "Device assigned to Workspace " + std::string(1, letter);
+                g_lastEvent = msg;
+                LOG_INFO("%s", msg.c_str());
+                DebugPrintAssignment("✅ Assignment successful: " + msg);
+                
+                RefreshTree();
+                UpdateStatusBar();
+                
+                InvalidateRect(g_treeView, NULL, TRUE);
+                RedrawWindow(g_treeView, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE);
+                
+                MessageBoxA(hwnd, ("✅ " + msg).c_str(), "Success", MB_OK | MB_ICONINFORMATION);
+            } else {
+                DebugPrintAssignment("❌ Driver assignment FAILED!");
+                
+                // Try to get more info from driver
+                ULONG current = g_driverInterface->GetWorkspaceForDevice(deviceHandle);
+                DebugPrintAssignment("Current workspace from driver: " + std::to_string(current));
+                
+                // Still update local map (fallback)
+                g_deviceWorkspaceMap[deviceHandle] = workspaceId;
+                DebugPrintAssignment("Updated local map (fallback)");
+                
+                std::string msg = "Device assigned to Workspace " + std::string(1, letter) + " (local only)";
                 g_lastEvent = msg;
                 RefreshTree();
                 UpdateStatusBar();
+                
+                MessageBoxA(hwnd, 
+                    ("⚠️ " + msg + "\n\nDriver returned error, but local tracking updated.").c_str(), 
+                    "Partial Success", MB_OK | MB_ICONWARNING);
             }
+        } else {
+            // Driver not connected - update local map only
+            DebugPrintAssignment("Driver not connected - updating local map only");
+            g_deviceWorkspaceMap[deviceHandle] = workspaceId;
+            std::string msg = "Device assigned to Workspace " + std::string(1, letter) + " (local only)";
+            g_lastEvent = msg;
+            LOG_INFO("%s", msg.c_str());
+            DebugPrintAssignment("✅ Local assignment: " + msg);
+            
+            RefreshTree();
+            UpdateStatusBar();
+            
+            InvalidateRect(g_treeView, NULL, TRUE);
+            RedrawWindow(g_treeView, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE);
+            
+            MessageBoxA(hwnd, 
+                ("⚠️ " + msg + "\n\nDriver not connected. Isolation may not work.").c_str(), 
+                "Warning", MB_OK | MB_ICONWARNING);
         }
     }
 }
@@ -627,19 +985,25 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             SetTimer(hwnd, 1, 500, NULL);
             return 0;
         }
-        case WM_TIMER:
+
+        case WM_TIMER: {
             if (CheckForChanges()) {
                 RefreshTree();
                 UpdateStatusBar();
             }
+            TrackWindowMonitors();
             return 0;
+        }
+
         case WM_SIZE:
             LayoutControls(hwnd);
             return 0;
+
         case WM_DEVICECHANGE:
             RefreshTree();
             UpdateStatusBar();
             return 0;
+
         case WM_CONTEXTMENU: {
             POINT pt;
             pt.x = GET_X_LPARAM(lParam);
@@ -649,6 +1013,7 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             g_refreshPaused = false;
             return 0;
         }
+
         case WM_DESTROY:
             KillTimer(hwnd, 1);
             if (g_font) DeleteObject(g_font);
@@ -656,16 +1021,15 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             if (g_imageList) ImageList_Destroy(g_imageList);
             PostQuitMessage(0);
             return 0;
+
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE) {
                 g_running = false;
                 DestroyWindow(hwnd);
                 return 0;
             }
-            if (wParam == 'R') {
-                g_lastEvent = "Manual refresh";
-                RefreshTree();
-                UpdateStatusBar();
+            if (wParam == 'R' || wParam == 'r') {
+                ForceRefresh();
                 return 0;
             }
             break;
@@ -778,14 +1142,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
         auto workspaces = workspaceManager.GetAllWorkspaces();
         std::string logMsg = "Number of workspaces: " + std::to_string(workspaces.size());
-        LOG_INFO(logMsg);
+        LOG_INFO("%s", logMsg.c_str());
 
-        if (driverInterface.Open()) {
-            LOG_INFO("Driver connected");
-            driverInterface.SetRouteMode(1);
-        } else {
-            LOG_WARN("Driver not available");
-        }
+ if (driverInterface.Open()) {
+    LOG_INFO("Driver connected");
+    driverInterface.SetRouteMode(TRUE);  // ← Changed from 1 to TRUE
+    TestDriverCommunication();
+} else {
+    LOG_WARN("Driver not available");
+}
 
         g_cachedMonitorCount = (int)displayManager.EnumerateDisplays().size();
         g_cachedWindowCount = 0;
@@ -913,7 +1278,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     catch (const std::exception& e) {
         std::string errMsg = "Unhandled exception: ";
         errMsg += e.what();
-        LOG_ERROR(errMsg);
+        LOG_ERROR("%s", errMsg.c_str());
         std::string errMsg2 = "Fatal error: ";
         errMsg2 += e.what();
         MessageBoxA(NULL, 
