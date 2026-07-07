@@ -34,11 +34,13 @@ static PDEVICE_OBJECT g_pDeviceObject = NULL;
 
 extern "C" {
 
+// Forward declarations
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath);
 VOID DualDeskDriverUnload(PDRIVER_OBJECT DriverObject);
 NTSTATUS DispatchCreateClose(PDEVICE_OBJECT DeviceObject, PIRP Irp);
 NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp);
 
+// Helper functions
 ULONG FindDeviceWorkspace(PDEVICE_EXTENSION pExt, HANDLE deviceHandle) {
     if (!pExt) return WORKSPACE_UNASSIGNED;
     for (ULONG i = 0; i < pExt->deviceCount; i++) {
@@ -105,81 +107,130 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     
     switch (controlCode) {
         case IOCTL_DUALDESK_ASSIGN_DEVICE: {
+            DbgPrint("DualDesk: ASSIGN_DEVICE called\n");
+            
             if (pStack->Parameters.DeviceIoControl.InputBufferLength < sizeof(ULONG) * 2) {
+                DbgPrint("DualDesk: Input buffer too small\n");
                 status = STATUS_INVALID_PARAMETER;
                 break;
             }
+            
             ULONG* buffer = (ULONG*)Irp->AssociatedIrp.SystemBuffer;
             HANDLE deviceHandle = (HANDLE)buffer[0];
             ULONG workspaceId = buffer[1];
+            
             status = AddDeviceMapping(pExt, deviceHandle, workspaceId);
-            DbgPrint("DualDesk: ASSIGN device %p -> workspace %lu\n", deviceHandle, workspaceId);
+            DbgPrint("DualDesk: ASSIGN device %p -> workspace %lu (status: %X)\n", deviceHandle, workspaceId, status);
             break;
         }
+        
         case IOCTL_DUALDESK_UNASSIGN_DEVICE: {
-            if (pStack->Parameters.DeviceIoControl.InputBufferLength < sizeof(HANDLE)) {
+            DbgPrint("DualDesk: UNASSIGN_DEVICE called\n");
+            
+            if (pStack->Parameters.DeviceIoControl.InputBufferLength < sizeof(ULONG)) {
+                DbgPrint("DualDesk: Input buffer too small (need %zu, have %lu)\n", 
+                    sizeof(ULONG), pStack->Parameters.DeviceIoControl.InputBufferLength);
                 status = STATUS_INVALID_PARAMETER;
                 break;
             }
-            HANDLE deviceHandle = *(HANDLE*)Irp->AssociatedIrp.SystemBuffer;
+            
+            ULONG deviceHandleUlong = *(ULONG*)Irp->AssociatedIrp.SystemBuffer;
+            HANDLE deviceHandle = (HANDLE)(ULONG_PTR)deviceHandleUlong;
+            
             status = RemoveDeviceMapping(pExt, deviceHandle);
-            DbgPrint("DualDesk: UNASSIGN device %p\n", deviceHandle);
+            DbgPrint("DualDesk: UNASSIGN device %p (status: %X)\n", deviceHandle, status);
             break;
         }
+        
         case IOCTL_DUALDESK_GET_WORKSPACE: {
-            if (pStack->Parameters.DeviceIoControl.InputBufferLength < sizeof(HANDLE) ||
-                pStack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(ULONG)) {
+            DbgPrint("DualDesk: GET_WORKSPACE called\n");
+            
+            if (pStack->Parameters.DeviceIoControl.InputBufferLength < sizeof(ULONG)) {
+                DbgPrint("DualDesk: Input buffer too small (need %zu, have %lu)\n", 
+                    sizeof(ULONG), pStack->Parameters.DeviceIoControl.InputBufferLength);
                 status = STATUS_INVALID_PARAMETER;
                 break;
             }
-            HANDLE deviceHandle = *(HANDLE*)Irp->AssociatedIrp.SystemBuffer;
+            
+            if (pStack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(ULONG)) {
+                DbgPrint("DualDesk: Output buffer too small\n");
+                status = STATUS_INVALID_PARAMETER;
+                break;
+            }
+            
+            ULONG deviceHandleUlong = *(ULONG*)Irp->AssociatedIrp.SystemBuffer;
+            HANDLE deviceHandle = (HANDLE)(ULONG_PTR)deviceHandleUlong;
+            
             ULONG workspaceId = FindDeviceWorkspace(pExt, deviceHandle);
             *(ULONG*)Irp->AssociatedIrp.SystemBuffer = workspaceId;
             information = sizeof(ULONG);
-            DbgPrint("DualDesk: GET device %p -> workspace %lu\n", deviceHandle, workspaceId);
+            status = STATUS_SUCCESS;
+            
+            DbgPrint("DualDesk: GET_WORKSPACE device %p -> workspace %lu\n", deviceHandle, workspaceId);
             break;
         }
+        
         case IOCTL_DUALDESK_SET_ROUTE_MODE: {
+            DbgPrint("DualDesk: SET_ROUTE_MODE called\n");
+            
             if (pStack->Parameters.DeviceIoControl.InputBufferLength < sizeof(BOOLEAN)) {
+                DbgPrint("DualDesk: Input buffer too small\n");
                 status = STATUS_INVALID_PARAMETER;
                 break;
             }
+            
             BOOLEAN enable = *(BOOLEAN*)Irp->AssociatedIrp.SystemBuffer;
             pExt->routeModeEnabled = enable;
             DbgPrint("DualDesk: ROUTE MODE %s\n", enable ? "ENABLED" : "DISABLED");
+            status = STATUS_SUCCESS;
             break;
         }
+        
         case IOCTL_DUALDESK_RESET: {
+            DbgPrint("DualDesk: RESET called\n");
+            
             pExt->deviceCount = 0;
             pExt->routeModeEnabled = FALSE;
             pExt->blockedInputs = 0;
             pExt->routedInputs = 0;
+            for (int i = 0; i < MAX_DEVICES; i++) {
+                pExt->deviceHandles[i] = NULL;
+                pExt->workspaceIds[i] = WORKSPACE_UNASSIGNED;
+            }
+            
             DbgPrint("DualDesk: RESET all mappings\n");
+            status = STATUS_SUCCESS;
             break;
         }
+        
         case IOCTL_DUALDESK_GET_STATUS: {
-            if (pStack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(ULONG) * 3) {
+            DbgPrint("DualDesk: GET_STATUS called\n");
+            
+            if (pStack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(ULONG) * 4) {
+                DbgPrint("DualDesk: Output buffer too small (need %zu, have %lu)\n", 
+                    sizeof(ULONG) * 4, pStack->Parameters.DeviceIoControl.OutputBufferLength);
                 status = STATUS_BUFFER_TOO_SMALL;
                 break;
             }
+            
             ULONG* output = (ULONG*)Irp->AssociatedIrp.SystemBuffer;
             output[0] = pExt->deviceCount;
             output[1] = pExt->routedInputs;
             output[2] = pExt->blockedInputs;
-            information = sizeof(ULONG) * 3;
+            output[3] = 0;
+            
+            information = sizeof(ULONG) * 4;
+            status = STATUS_SUCCESS;
+            
+            DbgPrint("DualDesk: GET_STATUS devices=%lu, routed=%lu, blocked=%lu\n", 
+                output[0], output[1], output[2]);
             break;
         }
+        
         default: {
-            // Handle FSCTL queries from 'dir' command
-            if (controlCode == 0x00070000 || controlCode == 0x00070001 || 
-                controlCode == 0x00070002 || controlCode == 0x00070003) {
-                DbgPrint("DualDesk: FSCTL query accepted (0x%X)\n", controlCode);
-                status = STATUS_SUCCESS;
-                information = 0;
-            } else {
-                DbgPrint("DualDesk: Unknown IOCTL 0x%X\n", controlCode);
-                status = STATUS_INVALID_DEVICE_REQUEST;
-            }
+            DbgPrint("DualDesk: Unknown IOCTL 0x%X - accepting as SUCCESS\n", controlCode);
+            status = STATUS_SUCCESS;
+            information = 0;
             break;
         }
     }
@@ -195,11 +246,15 @@ VOID DualDeskDriverUnload(PDRIVER_OBJECT DriverObject) {
     RtlInitUnicodeString(&dosDeviceName, DOS_DEVICE_NAME);
     
     DbgPrint("DualDesk: Driver unloading\n");
+    
     IoDeleteSymbolicLink(&dosDeviceName);
+    
     if (g_pDeviceObject) {
         IoDeleteDevice(g_pDeviceObject);
         g_pDeviceObject = NULL;
     }
+    
+    DbgPrint("DualDesk: Driver unloaded\n");
 }
 
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) {

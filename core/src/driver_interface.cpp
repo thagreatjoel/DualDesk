@@ -88,7 +88,28 @@ bool DriverInterface::AssignDeviceToWorkspace(HANDLE deviceHandle, ULONG workspa
 
 bool DriverInterface::UnassignDevice(HANDLE deviceHandle) {
     ULONG handle = (ULONG)(ULONG_PTR)deviceHandle;
-    return SendIoctl(IOCTL_DUALDESK_UNASSIGN_DEVICE, &handle, sizeof(handle), NULL, 0, NULL);
+    DWORD bytesReturned = 0;
+    
+    // Send UNASSIGN IOCTL to driver
+    BOOL result = DeviceIoControl(
+        m_hDevice,
+        IOCTL_DUALDESK_UNASSIGN_DEVICE,  // IOCTL code
+        &handle,                         // Input buffer
+        sizeof(handle),                  // Input size
+        NULL,                            // Output buffer
+        0,                               // Output size
+        &bytesReturned,                  // Bytes returned
+        NULL                             // Overlapped
+    );
+    
+    if (!result) {
+        DWORD error = GetLastError();
+        LOG_ERROR("UnassignDevice failed: %d", error);
+        return false;
+    }
+    
+    LOG_INFO("Device unassigned successfully");
+    return true;
 }
 
 ULONG DriverInterface::GetWorkspaceForDevice(HANDLE deviceHandle) {
@@ -104,7 +125,27 @@ bool DriverInterface::SetRouteMode(BOOLEAN enable) {
 }
 
 bool DriverInterface::ResetDeviceAssignments() {
-    return SendIoctl(IOCTL_DUALDESK_RESET, NULL, 0, NULL, 0, NULL);
+    DWORD bytesReturned = 0;
+    
+    BOOL result = DeviceIoControl(
+        m_hDevice,
+        IOCTL_DUALDESK_RESET,  // RESET IOCTL code
+        NULL,                  // No input
+        0,                     // No input size
+        NULL,                  // No output
+        0,                     // No output size
+        &bytesReturned,        // Bytes returned
+        NULL                   // Overlapped
+    );
+    
+    if (!result) {
+        DWORD error = GetLastError();
+        LOG_ERROR("ResetDeviceAssignments failed: %d", error);
+        return false;
+    }
+    
+    LOG_INFO("All device assignments reset");
+    return true;
 }
 
 ULONG DriverInterface::GetDeviceCount() const {

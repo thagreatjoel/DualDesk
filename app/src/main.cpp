@@ -800,11 +800,9 @@ void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
     }
     
     HANDLE deviceHandle = (HANDLE)item.lParam;
-    DebugPrintAssignment("Context menu for device handle=" + std::to_string((uintptr_t)deviceHandle));
     
     // Check if device handle is valid
     if (deviceHandle == INVALID_HANDLE_VALUE || deviceHandle == nullptr) {
-        DebugPrintAssignment("ERROR: Invalid device handle!");
         MessageBoxA(hwnd, "Invalid device handle. Please try again.", "Error", MB_OK | MB_ICONERROR);
         return;
     }
@@ -825,21 +823,6 @@ void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
         DebugPrintAssignment("Currently NOT assigned");
     }
     
-    // Check if driver is connected
-    bool driverConnected = (g_driverInterface && g_driverInterface->IsConnected());
-    DebugPrintAssignment("Driver connected: " + std::string(driverConnected ? "YES" : "NO"));
-    
-    if (!driverConnected) {
-        // Try to reconnect
-        DebugPrintAssignment("Attempting to reconnect to driver...");
-        if (g_driverInterface && g_driverInterface->Open()) {
-            driverConnected = true;
-            DebugPrintAssignment("Reconnected to driver successfully!");
-        } else {
-            DebugPrintAssignment("Failed to reconnect to driver!");
-        }
-    }
-    
     HMENU hMenu = CreatePopupMenu();
     
     int menuId = 1;
@@ -858,6 +841,7 @@ void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
         menuId++;
     }
     
+    // Add unassign option ONLY if device is assigned
     if (currentWorkspace != 0xFFFFFFFF) {
         AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(hMenu, MF_STRING, 999, L"Remove Assignment");
@@ -872,25 +856,39 @@ void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
     DestroyMenu(hMenu);
     
     if (cmd == 999) {
-        // Remove assignment
-        if (driverConnected) {
-            if (g_driverInterface->UnassignDevice(deviceHandle)) {
-                g_deviceWorkspaceMap.erase(deviceHandle);
-                g_lastEvent = "Device unassigned";
-                DebugPrintAssignment("Device unassigned successfully");
-                RefreshTree();
-                UpdateStatusBar();
-            } else {
-                DebugPrintAssignment("Failed to unassign device");
-                MessageBoxA(hwnd, "Failed to unassign device.", "Error", MB_OK | MB_ICONERROR);
-            }
+        // ============================================================
+        // UNASSIGN DEVICE - COMPLETE IMPLEMENTATION
+        // ============================================================
+        DebugPrintAssignment("=== UNASSIGN REQUEST ===");
+        DebugPrintAssignment("Device handle: " + std::to_string((uintptr_t)deviceHandle));
+        
+        // Remove from local map FIRST
+        g_deviceWorkspaceMap.erase(deviceHandle);
+        g_lastEvent = "Device unassigned";
+        
+        // Try to unassign from driver
+        bool driverSuccess = false;
+        if (g_driverInterface && g_driverInterface->IsConnected()) {
+            DebugPrintAssignment("Calling driver->UnassignDevice()...");
+            driverSuccess = g_driverInterface->UnassignDevice(deviceHandle);
+            DebugPrintAssignment("Driver unassign result: " + std::string(driverSuccess ? "SUCCESS" : "FAILED"));
         } else {
-            // Just remove from local map
-            g_deviceWorkspaceMap.erase(deviceHandle);
-            g_lastEvent = "Device unassigned (local only)";
-            DebugPrintAssignment("Device unassigned locally (driver not connected)");
-            RefreshTree();
-            UpdateStatusBar();
+            DebugPrintAssignment("Driver not connected - local unassign only");
+        }
+        
+        // Refresh UI
+        RefreshTree();
+        UpdateStatusBar();
+        
+        // Show appropriate message
+        if (driverSuccess) {
+            MessageBoxA(hwnd, "✅ Device unassigned from workspace", "Success", MB_OK | MB_ICONINFORMATION);
+        } else {
+            MessageBoxA(hwnd, 
+                "⚠️ Device unassigned locally.\n\n"
+                "Driver not connected or unassign failed.\n"
+                "The UI has been updated.",
+                "Info", MB_OK | MB_ICONWARNING);
         }
         return;
     }
@@ -904,6 +902,8 @@ void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
         DebugPrintAssignment("=== ASSIGNMENT REQUEST ===");
         DebugPrintAssignment("Device handle: " + std::to_string((uintptr_t)deviceHandle));
         DebugPrintAssignment("Target workspace: " + ws->GetName() + " (ID: " + std::to_string(workspaceId) + ")");
+        
+        bool driverConnected = (g_driverInterface && g_driverInterface->IsConnected());
         DebugPrintAssignment("Driver connected: " + std::string(driverConnected ? "YES" : "NO"));
         
         if (driverConnected) {
@@ -929,10 +929,6 @@ void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
                 MessageBoxA(hwnd, ("✅ " + msg).c_str(), "Success", MB_OK | MB_ICONINFORMATION);
             } else {
                 DebugPrintAssignment("❌ Driver assignment FAILED!");
-                
-                // Try to get more info from driver
-                ULONG current = g_driverInterface->GetWorkspaceForDevice(deviceHandle);
-                DebugPrintAssignment("Current workspace from driver: " + std::to_string(current));
                 
                 // Still update local map (fallback)
                 g_deviceWorkspaceMap[deviceHandle] = workspaceId;
@@ -966,7 +962,25 @@ void ShowDeviceContextMenu(HWND hwnd, POINT pt) {
                 ("⚠️ " + msg + "\n\nDriver not connected. Isolation may not work.").c_str(), 
                 "Warning", MB_OK | MB_ICONWARNING);
         }
+    }  if (cmd == 999) {
+    DebugPrintAssignment("=== UNASSIGN CALLED ===");
+    DebugPrintAssignment("Device handle: " + std::to_string((uintptr_t)deviceHandle));
+    
+    // First, try driver unassign
+    bool driverUnassigned = false;
+    if (g_driverInterface && g_driverInterface->IsConnected()) {
+        driverUnassigned = g_driverInterface->UnassignDevice(deviceHandle);
+        DebugPrintAssignment("Driver unassign result: " + std::string(driverUnassigned ? "TRUE" : "FALSE"));
     }
+    
+    // Always remove from local map
+    g_deviceWorkspaceMap.erase(deviceHandle);
+    g_lastEvent = "Device unassigned";
+    
+    RefreshTree();
+    UpdateStatusBar();
+    return;
+}
 }
 
 LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1023,17 +1037,30 @@ LRESULT CALLBACK StatusWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             return 0;
 
         case WM_KEYDOWN:
-            if (wParam == VK_ESCAPE) {
-                g_running = false;
-                DestroyWindow(hwnd);
-                return 0;
-            }
-            if (wParam == 'R' || wParam == 'r') {
-                ForceRefresh();
-                return 0;
-            }
-            break;
+    if (wParam == VK_ESCAPE) {
+        g_running = false;
+        DestroyWindow(hwnd);
+        return 0;
     }
+    if (wParam == 'R' || wParam == 'r') {
+        ForceRefresh();
+        return 0;
+    }
+    // ===== ADD THIS =====
+    if (wParam == 'U' || wParam == 'u') {
+        // Reset all assignments
+        g_deviceWorkspaceMap.clear();
+        if (g_driverInterface && g_driverInterface->IsConnected()) {
+            g_driverInterface->ResetDeviceAssignments();
+        }
+        g_lastEvent = "All devices unassigned";
+        RefreshTree();
+        UpdateStatusBar();
+        MessageBoxA(hwnd, "✅ All devices unassigned", "Reset Complete", MB_OK | MB_ICONINFORMATION);
+        return 0;
+    }
+    break;
+
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
