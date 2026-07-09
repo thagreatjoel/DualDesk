@@ -15,19 +15,33 @@ public:
     bool Open();
     void Close();
     bool IsConnected() const;
-
-    // Device assignment
+    
+    // ============================================================
+    // DEVICE ASSIGNMENT
+    // ============================================================
     bool AssignDeviceToWorkspace(HANDLE deviceHandle, ULONG workspaceId);
     bool UnassignDevice(HANDLE deviceHandle);
     ULONG GetWorkspaceForDevice(HANDLE deviceHandle);
     
-    // Route mode - ONLY ONE overload to avoid ambiguity
+    // ============================================================
+    // ROUTE MODE - ONLY ONE overload to avoid ambiguity
+    // ============================================================
     bool SetRouteMode(BOOLEAN enable);  // Use TRUE/FALSE, not 1/0
     
+    // ============================================================
+    // FILTER REGISTRATION - ADD THIS
+    // ============================================================
+    bool RegisterFilters();  // ← ADD THIS
+    
+    // ============================================================
+    // RESET AND STATUS
+    // ============================================================
     bool ResetDeviceAssignments();
     ULONG GetDeviceCount() const;
 
-    // Additional methods for compatibility
+    // ============================================================
+    // COMPATIBILITY METHODS
+    // ============================================================
     bool AddDevice(HANDLE deviceHandle, ULONG workspaceId);
     bool RemoveDevice(HANDLE deviceHandle);
     bool RouteInput(HANDLE deviceHandle, const std::vector<uint8_t>& inputData);

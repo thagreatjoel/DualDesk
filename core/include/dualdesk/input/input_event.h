@@ -1,6 +1,7 @@
 #pragma once
 #include "input_device.h"
 #include <windows.h>
+#include <string>
 
 namespace dualdesk {
 
@@ -18,6 +19,13 @@ struct InputEvent {
     InputEventType type = InputEventType::Unknown;
     DeviceId deviceId = 0;
     uint64_t timestamp = 0;
+    
+    // ============================================================
+    // ADD THESE FIELDS - For device routing
+    // ============================================================
+    HANDLE deviceHandle = NULL;     // ← ADD THIS
+    int deltaX = 0;                 // ← ADD THIS
+    int deltaY = 0;                 // ← ADD THIS
     
     // Keyboard data
     uint16_t keyCode = 0;

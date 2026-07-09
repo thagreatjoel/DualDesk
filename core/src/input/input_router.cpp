@@ -1,6 +1,11 @@
 #include "dualdesk/input/input_router.h"
 #include "dualdesk/core/logger.h"
+#include "dualdesk/core/types.h"
 #include <windows.h>
+
+// ============================================================
+// ADD THIS - WORKSPACE_UNASSIGNED is defined in types.h
+// ============================================================
 
 namespace dualdesk {
 
@@ -37,25 +42,55 @@ void InputRouter::Shutdown() {
     LOG_INFO("InputRouter shutdown");
 }
 
+void InputRouter::SetCursorEmulator(CursorEmulator* cursorEmulator) {
+    cursorEmulator_ = cursorEmulator;
+    LOG_INFO("CursorEmulator set in InputRouter");
+}
+
+void InputRouter::SetDeviceWorkspaceMap(const std::map<HANDLE, ULONG>* deviceMap) {
+    deviceWorkspaceMap_ = deviceMap;
+    LOG_INFO("Device workspace map set in InputRouter");
+}
+
+// ============================================================
+// FIXED: GetWorkspaceForDevice - uses WORKSPACE_UNASSIGNED from types.h
+// ============================================================
+ULONG InputRouter::GetWorkspaceForDevice(HANDLE deviceHandle) const {
+    if (!deviceWorkspaceMap_) return WORKSPACE_UNASSIGNED;
+    
+    auto it = deviceWorkspaceMap_->find(deviceHandle);
+    if (it != deviceWorkspaceMap_->end()) {
+        return it->second;
+    }
+    return WORKSPACE_UNASSIGNED;
+}
+
+// ============================================================
+// FIXED: RouteInput - uses event.deviceHandle (added to input_event.h)
+// ============================================================
 bool InputRouter::RouteInput(const InputEvent& event) {
     processedEventCount_++;
 
-    // Filter the event
     if (!filter_.ShouldProcessEvent(event)) {
         filteredEventCount_++;
         LOG_DEBUG("Event filtered");
         return false;
     }
 
-    // Find target workspace
-    Workspace* targetWorkspace = filter_.GetTargetWorkspace(event);
-    if (!targetWorkspace) {
-        LOG_WARN("No target workspace found");
-        return false;
+    ULONG workspaceId = GetWorkspaceForDevice(event.deviceHandle);
+    
+    if (workspaceId == WORKSPACE_UNASSIGNED) {
+        Workspace* targetWorkspace = filter_.GetTargetWorkspace(event);
+        if (targetWorkspace) {
+            workspaceId = targetWorkspace->GetId();
+        } else {
+            LOG_WARN("No target workspace found");
+            return false;
+        }
     }
 
-    // Route based on event type
     bool result = false;
+    
     if (event.type == InputEventType::KeyDown || 
         event.type == InputEventType::KeyUp) {
         result = RouteKeyboardEvent(event);
@@ -70,38 +105,42 @@ bool InputRouter::RouteInput(const InputEvent& event) {
         routedEventCount_++;
     }
 
-    // Callback
     if (routeCallback_) {
-        routeCallback_(event, targetWorkspace);
+        Workspace* workspace = workspaceManager_->GetWorkspace(workspaceId);
+        routeCallback_(event, workspace);
     }
 
     return result;
 }
 
 bool InputRouter::RouteKeyboardEvent(const InputEvent& event) {
-    Workspace* workspace = filter_.GetTargetWorkspace(event);
+    ULONG workspaceId = GetWorkspaceForDevice(event.deviceHandle);
+    if (workspaceId == WORKSPACE_UNASSIGNED) {
+        Workspace* ws = filter_.GetTargetWorkspace(event);
+        if (!ws) return false;
+        workspaceId = ws->GetId();
+    }
+
+    Workspace* workspace = workspaceManager_->GetWorkspace(workspaceId);
     if (!workspace) return false;
 
-    // Get all windows in this workspace and send to active one
     auto windows = workspace->GetWindows();
     if (windows.empty()) {
         LOG_DEBUG("No windows in workspace to receive keyboard input");
         return false;
     }
 
-    // Send to the foreground window in this workspace
-    HWND targetWindow = GetForegroundWindow();
+    HWND targetWindow = NULL;
+    HWND foregroundWindow = GetForegroundWindow();
     
-    // Check if foreground window belongs to this workspace
-    bool isValid = false;
     for (const auto& window : windows) {
-        if (window.handle == targetWindow) {
-            isValid = true;
+        if (window.handle == foregroundWindow) {
+            targetWindow = foregroundWindow;
             break;
         }
     }
 
-    if (!isValid && !windows.empty()) {
+    if (!targetWindow && !windows.empty()) {
         targetWindow = windows[0].handle;
     }
 
@@ -109,15 +148,30 @@ bool InputRouter::RouteKeyboardEvent(const InputEvent& event) {
 }
 
 bool InputRouter::RouteMouseEvent(const InputEvent& event) {
-    Workspace* workspace = filter_.GetTargetWorkspace(event);
+    ULONG workspaceId = GetWorkspaceForDevice(event.deviceHandle);
+    if (workspaceId == WORKSPACE_UNASSIGNED) {
+        Workspace* ws = filter_.GetTargetWorkspace(event);
+        if (!ws) return false;
+        workspaceId = ws->GetId();
+    }
+
+    if (cursorEmulator_) {
+        ULONG realWorkspace = cursorEmulator_->GetRealCursorWorkspace();
+        
+        if (workspaceId == realWorkspace) {
+            return RouteMouseToRealCursor(event, workspaceId);
+        } else {
+            return RouteMouseToVirtualCursor(event, workspaceId);
+        }
+    }
+
+    Workspace* workspace = workspaceManager_->GetWorkspace(workspaceId);
     if (!workspace) return false;
 
-    // Get window under cursor
     POINT cursorPos;
     GetCursorPos(&cursorPos);
     HWND targetWindow = WindowFromPoint(cursorPos);
 
-    // Check if window belongs to this workspace
     bool isValid = false;
     auto windows = workspace->GetWindows();
     for (const auto& window : windows) {
@@ -132,6 +186,60 @@ bool InputRouter::RouteMouseEvent(const InputEvent& event) {
     }
 
     return SendInputToWindow(event, targetWindow);
+}
+
+// ============================================================
+// FIXED: RouteMouseToRealCursor - uses event.deltaX/deltaY (added to input_event.h)
+// ============================================================
+bool InputRouter::RouteMouseToRealCursor(const InputEvent& event, ULONG workspaceId) {
+    if (!cursorEmulator_) return false;
+    
+    switch (event.type) {
+        case InputEventType::MouseMove:
+            // event.deltaX and event.deltaY are now in input_event.h
+            cursorEmulator_->RouteMouseMove(workspaceId, event.deltaX, event.deltaY);
+            return true;
+
+        case InputEventType::MouseButtonDown:
+            cursorEmulator_->RouteMouseButton(workspaceId, true, true);
+            return true;
+
+        case InputEventType::MouseButtonUp:
+            cursorEmulator_->RouteMouseButton(workspaceId, true, false);
+            return true;
+
+        case InputEventType::MouseWheel:
+            cursorEmulator_->RouteMouseWheel(workspaceId, event.wheelDelta);
+            return true;
+
+        default:
+            return false;
+    }
+}
+
+bool InputRouter::RouteMouseToVirtualCursor(const InputEvent& event, ULONG workspaceId) {
+    if (!cursorEmulator_) return false;
+    
+    switch (event.type) {
+        case InputEventType::MouseMove:
+            cursorEmulator_->RouteMouseMove(workspaceId, event.deltaX, event.deltaY);
+            return true;
+
+        case InputEventType::MouseButtonDown:
+            cursorEmulator_->RouteMouseButton(workspaceId, true, true);
+            return true;
+
+        case InputEventType::MouseButtonUp:
+            cursorEmulator_->RouteMouseButton(workspaceId, true, false);
+            return true;
+
+        case InputEventType::MouseWheel:
+            cursorEmulator_->RouteMouseWheel(workspaceId, event.wheelDelta);
+            return true;
+
+        default:
+            return false;
+    }
 }
 
 bool InputRouter::SendInputToWindow(const InputEvent& event, HWND targetWindow) {
@@ -164,12 +272,10 @@ bool InputRouter::ProcessKeyEvent(const InputEvent& event, HWND targetWindow) {
                     (event.isExtended ? 0x01000000 : 0) |
                     (event.type == InputEventType::KeyDown ? 0 : 0xC0000000);
 
-    // Try to post the message
     return PostMessage(targetWindow, msg, wParam, lParam) != 0;
 }
 
 bool InputRouter::ProcessMouseEvent(const InputEvent& event, HWND targetWindow) {
-    // Get cursor position
     POINT pt;
     GetCursorPos(&pt);
     ScreenToClient(targetWindow, &pt);

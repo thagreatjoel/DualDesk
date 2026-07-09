@@ -6,7 +6,6 @@ namespace dualdesk {
 
 Workspace::Workspace(WorkspaceId id, const std::string& name, HMONITOR monitor)
     : id_(id), monitor_(monitor), name_(name) {
-    // Use %s with .c_str() for format string
     LOG_DEBUG("Workspace created: %s (ID: %d)", name_.c_str(), id_);
 }
 
@@ -79,6 +78,21 @@ void Workspace::BringToFront() {
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
     LOG_DEBUG("Workspace brought to front: %s", name_.c_str());
+}
+
+// ============================================================
+// GetMonitorBounds implementation
+// ============================================================
+RECT Workspace::GetMonitorBounds() const {
+    RECT bounds = {0, 0, 0, 0};
+    if (monitor_) {
+        MONITORINFOEXW info;
+        info.cbSize = sizeof(MONITORINFOEXW);
+        if (GetMonitorInfoW(monitor_, &info)) {
+            bounds = info.rcMonitor;
+        }
+    }
+    return bounds;
 }
 
 } // namespace dualdesk

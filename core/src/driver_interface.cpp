@@ -20,6 +20,12 @@ namespace dualdesk {
 #define IOCTL_DUALDESK_GET_STATUS \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x805, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// ============================================================
+// ADD THIS MISSING IOCTL
+// ============================================================
+#define IOCTL_DUALDESK_REGISTER_FILTER \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x806, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 DriverInterface::DriverInterface() : m_hDevice(INVALID_HANDLE_VALUE), m_connected(false) {}
 
 DriverInterface::~DriverInterface() { Close(); }
@@ -90,16 +96,15 @@ bool DriverInterface::UnassignDevice(HANDLE deviceHandle) {
     ULONG handle = (ULONG)(ULONG_PTR)deviceHandle;
     DWORD bytesReturned = 0;
     
-    // Send UNASSIGN IOCTL to driver
     BOOL result = DeviceIoControl(
         m_hDevice,
-        IOCTL_DUALDESK_UNASSIGN_DEVICE,  // IOCTL code
-        &handle,                         // Input buffer
-        sizeof(handle),                  // Input size
-        NULL,                            // Output buffer
-        0,                               // Output size
-        &bytesReturned,                  // Bytes returned
-        NULL                             // Overlapped
+        IOCTL_DUALDESK_UNASSIGN_DEVICE,
+        &handle,
+        sizeof(handle),
+        NULL,
+        0,
+        &bytesReturned,
+        NULL
     );
     
     if (!result) {
@@ -119,9 +124,33 @@ ULONG DriverInterface::GetWorkspaceForDevice(HANDLE deviceHandle) {
     return workspaceId;
 }
 
-// ONLY ONE SetRouteMode - no ambiguity
 bool DriverInterface::SetRouteMode(BOOLEAN enable) {
     return SendIoctl(IOCTL_DUALDESK_SET_ROUTE_MODE, &enable, sizeof(enable), NULL, 0, NULL);
+}
+
+// ============================================================
+// FIXED RegisterFilters - uses the correct IOCTL
+// ============================================================
+bool DriverInterface::RegisterFilters() {
+    ULONG dummy = 0;
+    DWORD bytesReturned = 0;
+    
+    bool result = SendIoctl(
+        IOCTL_DUALDESK_REGISTER_FILTER,
+        &dummy,
+        sizeof(dummy),
+        NULL,
+        0,
+        &bytesReturned
+    );
+    
+    if (result) {
+        LOG_INFO("Filters registered with Windows");
+    } else {
+        LOG_ERROR("Failed to register filters");
+    }
+    
+    return result;
 }
 
 bool DriverInterface::ResetDeviceAssignments() {
@@ -129,13 +158,13 @@ bool DriverInterface::ResetDeviceAssignments() {
     
     BOOL result = DeviceIoControl(
         m_hDevice,
-        IOCTL_DUALDESK_RESET,  // RESET IOCTL code
-        NULL,                  // No input
-        0,                     // No input size
-        NULL,                  // No output
-        0,                     // No output size
-        &bytesReturned,        // Bytes returned
-        NULL                   // Overlapped
+        IOCTL_DUALDESK_RESET,
+        NULL,
+        0,
+        NULL,
+        0,
+        &bytesReturned,
+        NULL
     );
     
     if (!result) {

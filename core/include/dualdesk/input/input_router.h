@@ -4,65 +4,57 @@
 #include "input_filter.h"
 #include "input_translator.h"
 #include "../workspace/workspace_manager.h"
+#include "../cursor/cursor_emulator.h"
 #include <functional>
 #include <queue>
+#include <map>
 
 namespace dualdesk {
 
-/**
- * @brief Routes input events to the correct workspace
- * 
- * The InputRouter takes raw input events, filters them,
- * translates them if needed, and routes them to the target window.
- */
 class InputRouter {
 public:
     InputRouter();
     ~InputRouter();
 
-    // Initialize with managers
     bool Initialize(WorkspaceManager* workspaceManager);
     void Shutdown();
 
-    // Route an input event
+    void SetCursorEmulator(CursorEmulator* cursorEmulator);
+    void SetDeviceWorkspaceMap(const std::map<HANDLE, ULONG>* deviceMap);
+
     bool RouteInput(const InputEvent& event);
     bool RouteKeyboardEvent(const InputEvent& event);
     bool RouteMouseEvent(const InputEvent& event);
 
-    // Set callbacks
     using RouteCallback = std::function<bool(const InputEvent&, Workspace*)>;
     void SetRouteCallback(RouteCallback callback);
 
-    // Get the filter
     InputFilter* GetFilter() { return &filter_; }
 
-    // Statistics
     size_t GetProcessedEventCount() const { return processedEventCount_; }
     size_t GetRoutedEventCount() const { return routedEventCount_; }
     size_t GetFilteredEventCount() const { return filteredEventCount_; }
     void ResetStatistics();
 
-    // Event queue
     void QueueEvent(const InputEvent& event);
     void ProcessEventQueue();
     bool HasPendingEvents() const { return !eventQueue_.empty(); }
     size_t GetQueueSize() const { return eventQueue_.size(); }
 
+    ULONG GetWorkspaceForDevice(HANDLE deviceHandle) const;
+
 private:
-    // Find target window for event
     HWND FindTargetWindow(const InputEvent& event) const;
-
-    // Send input to window
     bool SendInputToWindow(const InputEvent& event, HWND targetWindow);
-
-    // Process key event
     bool ProcessKeyEvent(const InputEvent& event, HWND targetWindow);
-
-    // Process mouse event
     bool ProcessMouseEvent(const InputEvent& event, HWND targetWindow);
+    bool RouteMouseToRealCursor(const InputEvent& event, ULONG workspaceId);
+    bool RouteMouseToVirtualCursor(const InputEvent& event, ULONG workspaceId);
 
-    // Members
     WorkspaceManager* workspaceManager_ = nullptr;
+    CursorEmulator* cursorEmulator_ = nullptr;
+    const std::map<HANDLE, ULONG>* deviceWorkspaceMap_ = nullptr;
+    
     InputFilter filter_;
     InputTranslator translator_;
     RouteCallback routeCallback_;
@@ -72,6 +64,8 @@ private:
     size_t routedEventCount_ = 0;
     size_t filteredEventCount_ = 0;
     bool initialized_ = false;
+    
+    ULONG realCursorWorkspace_ = 0;
 };
 
 } // namespace dualdesk

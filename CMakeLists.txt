@@ -12,14 +12,17 @@ if(WIN32)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 endif()
 
-# Core library with all modules
+# ============================================================
+# Core library with ALL modules
+# ============================================================
 add_library(DualDeskCore STATIC
-    # ===== LOGGER - ADD THIS! =====
+    # Core
     core/src/logger.cpp
-    # ===== END ADD =====
     core/src/display_manager.cpp
     core/src/window_tracker.cpp
     core/src/driver_interface.cpp
+    
+    # Input
     core/src/input/input_device.cpp
     core/src/input/input_event.cpp
     core/src/input/input_manager.cpp
@@ -28,10 +31,18 @@ add_library(DualDeskCore STATIC
     core/src/input/input_router.cpp
     core/src/input/input_translator.cpp
     core/src/input/virtual_input.cpp
+    
+    # Workspace
     core/src/workspace/workspace.cpp
     core/src/workspace/workspace_manager.cpp
     core/src/workspace/window_mover.cpp
     core/src/workspace/window_snapper.cpp
+    
+    # ============================================================
+    # CURSOR MODULES - ADD THESE!
+    # ============================================================
+    core/src/cursor/virtual_cursor.cpp
+    core/src/cursor/cursor_emulator.cpp
 )
 
 target_include_directories(DualDeskCore
@@ -53,9 +64,12 @@ target_link_libraries(DualDeskCore
         uuid
         shell32
         advapi32
+        gdi32
 )
 
+# ============================================================
 # Main executable
+# ============================================================
 add_executable(DualDesk WIN32
     app/src/main.cpp
     app/src/application.cpp
@@ -75,6 +89,7 @@ target_link_libraries(DualDesk
     comdlg32
     shell32
     advapi32
+    gdi32
 )
 
 set_target_properties(DualDesk PROPERTIES
