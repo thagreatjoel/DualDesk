@@ -138,46 +138,39 @@ Each mouse will stay on its own monitor. Red borders show where each workspace b
 > sc start DualDesk
 > ```
 
-> [!NOTE]
-> **Driver won't start**
-> Test mode might not be on. Run:
-> ```
-> bcdedit /set testsigning on
-> ```
-> Restart your computer.
 
-> [!NOTE]
-> **Antivirus blocked the driver**
-> Add the entire DualDesk folder to your antivirus exceptions.
+- **Driver won't start**
+Test mode might not be on. Run:
+ ```
+ bcdedit /set testsigning on
+ ```
 
-> [!NOTE]
-> **SmartScreen blocked the app**
-> Click "More info" then "Run anyway".
 
-> [!NOTE]
-> **No red borders showing**
-> Make sure you have two or more monitors connected.
+- **Antivirus blocked the driver**: Add the entire DualDesk folder to your antivirus exceptions.
 
-> [!NOTE]
-> **Cursors still cross monitors**
-> Make sure each mouse is assigned to a workspace.
 
----
+- **SmartScreen blocked the app**: Click "More info" then "Run anyway".
+
+
+- **No red borders showing**: Make sure you have two or more monitors connected.
+
+
+- **Cursors still cross monitors**: Make sure each mouse is assigned to a workspace.
+
+
 
 ## HOW TO UNINSTALL
 
 Run uninstall.bat as Administrator. It will stop the driver and remove it. After that, you can delete the DualDesk folder.
 
----
 
 ## LICENSE
 
 MIT License. You can use, modify, and share this software freely.
 
----
 
-<div align="center">
 
-Made with C++ by the DualDesk Team
+## AI DISCLOSURE
+AI was used in this project for code and build process.
 
-</div>
+
