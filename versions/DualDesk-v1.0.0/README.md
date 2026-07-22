@@ -24,7 +24,8 @@ After installation disable Test Mode:
 # bcdedit /set testsigning off
 ```
 
-> [!WARNING] Windows Only Supports ONE Cursor
+> [!WARNING]
+> Windows Only Supports ONE Cursor
 > Windows is not designed for multiple curzors, here you can install eithermouse as free 
 
 
