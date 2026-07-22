@@ -46,8 +46,6 @@ DualDesk fixes this. It gives each monitor its own workspace. Each workspace get
 | Requirement | Minimum |
 |-------------|---------|
 | Windows | 10 or 11 (64-bit only) |
-| RAM | 4 GB |
-| Free space | 100 MB |
 | Monitors | 2 |
 | Mice | 2 |
 | Keyboards | 2 |
