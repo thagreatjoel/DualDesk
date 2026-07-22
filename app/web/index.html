@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DualDesk</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">[DD]</span>
+                <span class="logo-text">DualDesk</span>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item active" data-view="dashboard">
+                    <span class="nav-icon">[D]</span>
+                    <span>Dashboard</span>
+                </li>
+                <li class="nav-item" data-view="workspaces">
+                    <span class="nav-icon">[W]</span>
+                    <span>Workspaces</span>
+                </li>
+                <li class="nav-item" data-view="devices">
+                    <span class="nav-icon">[K]</span>
+                    <span>Devices</span>
+                </li>
+                <li class="nav-item" data-view="settings">
+                    <span class="nav-icon">[S]</span>
+                    <span>Settings</span>
+                </li>
+            </ul>
+            <button class="btn-refresh">↻ Refresh</button>
+        </nav>
+
+        <!-- Main -->
+        <main class="main-content">
+            <header class="header">
+                <h1 id="pageTitle">Dashboard</h1>
+                <div class="header-status">
+                    <span class="status-dot" id="driverDot"></span>
+                    <span id="driverStatusText">Driver: Connecting...</span>
+                </div>
+            </header>
+
+            <div class="content">
+                <!-- Dashboard -->
+                <section id="view-dashboard" class="view active">
+                    <div class="stats-grid" id="statsGrid">
+                        <div class="stat-card"><div class="stat-icon">🖥</div><div><div class="stat-label">Workspaces</div><div class="stat-value" id="statWorkspaces">0</div></div></div>
+                        <div class="stat-card"><div class="stat-icon">⌨</div><div><div class="stat-label">Devices</div><div class="stat-value" id="statDevices">0</div></div></div>
+                        <div class="stat-card"><div class="stat-icon">🔗</div><div><div class="stat-label">Assigned</div><div class="stat-value" id="statAssigned">0</div></div></div>
+                        <div class="stat-card"><div class="stat-icon">🪟</div><div><div class="stat-label">Windows</div><div class="stat-value" id="statWindows">0</div></div></div>
+                    </div>
+                    <div class="workspace-grid" id="workspaceGrid"></div>
+                </section>
+
+                <!-- Workspaces -->
+                <section id="view-workspaces" class="view">
+                    <h2>Workspace Management</h2>
+                    <div class="workspace-grid full" id="workspaceGridFull"></div>
+                </section>
+
+                <!-- Devices -->
+                <section id="view-devices" class="view">
+                    <h2>Device Management</h2>
+                    <div class="device-list-container">
+                        <div class="device-header"><span>Device</span><span>Workspace</span><span>Action</span></div>
+                        <div id="deviceList"></div>
+                    </div>
+                </section>
+
+                <!-- Settings -->
+                <section id="view-settings" class="view">
+                    <h2>Settings</h2>
+                    <div class="settings-list">
+                        <div class="setting-item"><span>Driver Status</span><span id="settingsDriverStatus" class="status-badge">--</span></div>
+                        <div class="setting-item"><span>Last Event</span><span id="settingsLastEvent" class="status-badge">--</span></div>
+                        <button id="testDriverBtn" class="btn btn-secondary" style="width:auto;margin-top:12px;">Test Driver</button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Status Bar -->
+            <footer class="status-bar">
+                <span id="statusDriver">Driver: --</span>
+                <span id="statusEvent">Event: --</span>
+                <span id="statusDeviceCount">Devices: 0</span>
+            </footer>
+        </main>
+    </div>
+
+    <!-- Right-click Context Menus -->
+    <div id="contextMenu" class="context-menu" style="display:none;"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>

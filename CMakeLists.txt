@@ -13,16 +13,13 @@ if(WIN32)
 endif()
 
 # ============================================================
-# Core library with ALL modules
+# Core library
 # ============================================================
 add_library(DualDeskCore STATIC
-    # Core
     core/src/logger.cpp
     core/src/display_manager.cpp
     core/src/window_tracker.cpp
     core/src/driver_interface.cpp
-    
-    # Input
     core/src/input/input_device.cpp
     core/src/input/input_event.cpp
     core/src/input/input_manager.cpp
@@ -31,18 +28,14 @@ add_library(DualDeskCore STATIC
     core/src/input/input_router.cpp
     core/src/input/input_translator.cpp
     core/src/input/virtual_input.cpp
-    
-    # Workspace
+    core/src/input/eithermouse_plugin.cpp
     core/src/workspace/workspace.cpp
     core/src/workspace/workspace_manager.cpp
     core/src/workspace/window_mover.cpp
     core/src/workspace/window_snapper.cpp
-    
-    # ============================================================
-    # CURSOR MODULES - ADD THESE!
-    # ============================================================
-    core/src/cursor/virtual_cursor.cpp
     core/src/cursor/cursor_emulator.cpp
+    core/src/cursor/virtual_cursor.cpp
+    core/src/display/monitor_border.cpp
 )
 
 target_include_directories(DualDeskCore
@@ -58,21 +51,15 @@ target_link_libraries(DualDeskCore
         hid
         setupapi
         comctl32
-        comdlg32
-        ole32
-        oleaut32
-        uuid
         shell32
-        advapi32
         gdi32
 )
 
 # ============================================================
-# Main executable
+# DualDesk Dashboard (main.cpp only)
 # ============================================================
 add_executable(DualDesk WIN32
     app/src/main.cpp
-    app/src/application.cpp
 )
 
 target_include_directories(DualDesk
@@ -82,22 +69,47 @@ target_include_directories(DualDesk
 )
 
 target_link_libraries(DualDesk
-    DualDeskCore
-    user32
-    kernel32
-    comctl32
-    comdlg32
-    shell32
-    advapi32
-    gdi32
+    PRIVATE
+        DualDeskCore
+        user32
+        kernel32
+        comctl32
+        shell32
+        gdi32
 )
 
 set_target_properties(DualDesk PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
-# Optional: Set output directory
-set_target_properties(DualDesk PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug"
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release"
+# ============================================================
+# DualMouse Standalone (mouse.cpp only)
+# ============================================================
+add_executable(DualMouse WIN32
+    app/src/mouse.cpp
 )
+
+target_include_directories(DualMouse PRIVATE
+    core/include
+)
+
+target_link_libraries(DualMouse
+    PRIVATE
+        user32
+        gdi32
+        comctl32
+)
+
+# Add this to the end of CMakeLists.txt
+
+# Copy EitherMouse.exe to build directory
+if(EXISTS "${CMAKE_SOURCE_DIR}/EitherMouse.exe")
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/EitherMouse.exe"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/EitherMouse.exe"
+        COPYONLY
+    )
+    message(STATUS "EitherMouse.exe copied to build directory")
+else()
+    message(WARNING "EitherMouse.exe not found in root directory")
+endif()

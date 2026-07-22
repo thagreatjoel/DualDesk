@@ -22,16 +22,59 @@
 #define IOCTL_DUALDESK_REGISTER_FILTER \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x806, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// ============================================================
+// ADD: DUAL MOUSE IOCTL CODES
+// ============================================================
+#define IOCTL_DUALMOUSE_ENABLE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x900, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DUALMOUSE_DISABLE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x901, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DUALMOUSE_SET_COLORS \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x902, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DUALMOUSE_GET_POSITIONS \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x903, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DUALMOUSE_SET_DEVICE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x904, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DUALMOUSE_GET_STATUS \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x905, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 #define WORKSPACE_UNASSIGNED 0xFFFFFFFF
 #define MAX_DEVICES 64
 #define MAX_FILTERS 32
 
-// Device Types
 #define DEVICE_TYPE_KEYBOARD 1
 #define DEVICE_TYPE_MOUSE 2
 
 // ============================================================
-// DEVICE EXTENSION
+// DUAL MOUSE DATA STRUCTURES
+// ============================================================
+typedef struct _DUALMOUSE_POSITIONS {
+    LONG X1;
+    LONG Y1;
+    LONG X2;
+    LONG Y2;
+} DUALMOUSE_POSITIONS, *PDUALMOUSE_POSITIONS;
+
+typedef struct _DUALMOUSE_COLORS {
+    ULONG Color1;
+    ULONG Color2;
+} DUALMOUSE_COLORS, *PDUALMOUSE_COLORS;
+
+typedef struct _DUALMOUSE_DEVICE_ASSIGN {
+    HANDLE DeviceHandle;
+    ULONG DeviceNumber;
+} DUALMOUSE_DEVICE_ASSIGN, *PDUALMOUSE_DEVICE_ASSIGN;
+
+typedef struct _DUALMOUSE_STATUS {
+    BOOLEAN Enabled;
+    ULONG TotalPackets;
+    ULONG RoutedPackets;
+    BOOLEAN Device1Active;
+    BOOLEAN Device2Active;
+} DUALMOUSE_STATUS, *PDUALMOUSE_STATUS;
+
+// ============================================================
+// DEVICE EXTENSION (Add DualMouse field)
 // ============================================================
 typedef struct _DEVICE_EXTENSION {
     PDEVICE_OBJECT pDeviceObject;
@@ -46,44 +89,59 @@ typedef struct _DEVICE_EXTENSION {
     ULONG totalInputs;
     KSPIN_LOCK lock;
     
-    // Filter contexts
     PDEVICE_OBJECT keyboardFilterDevice;
     PDEVICE_OBJECT mouseFilterDevice;
     PDEVICE_OBJECT keyboardTargetDevice;
     PDEVICE_OBJECT mouseTargetDevice;
     
-    // Original callbacks
     PKEYBOARD_CALLBACK keyboardCallback;
     PMOUSE_CALLBACK mouseCallback;
+    
+    // ============================================================
+    // ADD: DUAL MOUSE CONTEXT
+    // ============================================================
+    struct {
+        BOOLEAN Enabled;
+        LONG Cursor1X;
+        LONG Cursor1Y;
+        LONG Cursor2X;
+        LONG Cursor2Y;
+        ULONG Cursor1Color;
+        ULONG Cursor2Color;
+        HANDLE Device1Handle;
+        HANDLE Device2Handle;
+        BOOLEAN Device1Assigned;
+        BOOLEAN Device2Assigned;
+        ULONG TotalPackets;
+        ULONG RoutedPackets;
+    } DualMouse;
+    
 } DEVICE_EXTENSION, *PDEVICE_EXTENSION;
 
 static PDEVICE_OBJECT g_pDeviceObject = NULL;
 
 // ============================================================
-// FILTER CALLBACKS - These WILL be called by Windows
+// EXISTING FILTER CALLBACKS (Keep as is)
 // ============================================================
-
-// Keyboard filter callback
 VOID KeyboardFilterCallback(
     PDEVICE_OBJECT DeviceObject,
     PKEYBOARD_INPUT_DATA InputDataStart,
     PKEYBOARD_INPUT_DATA InputDataEnd,
     PULONG InputDataConsumed
 ) {
+    // ... EXISTING CODE - Keep unchanged ...
     PDEVICE_EXTENSION pExt = (PDEVICE_EXTENSION)g_pDeviceObject->DeviceExtension;
     if (!pExt) {
         *InputDataConsumed = (ULONG)((ULONG_PTR)InputDataEnd - (ULONG_PTR)InputDataStart) / sizeof(KEYBOARD_INPUT_DATA);
         return;
     }
     
-    // Get the device handle from the filter context
     PFILE_OBJECT fileObject = IoGetCurrentIrpStackLocation(IoGetCurrentIrp(DeviceObject))->FileObject;
     HANDLE deviceHandle = NULL;
     if (fileObject) {
         deviceHandle = (HANDLE)fileObject;
     }
     
-    // Find the workspace for this device
     ULONG workspaceId = WORKSPACE_UNASSIGNED;
     KeAcquireSpinLock(&pExt->lock, (PKIRQL)NULL);
     
@@ -96,30 +154,19 @@ VOID KeyboardFilterCallback(
     
     KeReleaseSpinLock(&pExt->lock, (PKIRQL)NULL);
     
-    // Process each input
     PKEYBOARD_INPUT_DATA current = InputDataStart;
     ULONG processedCount = 0;
     ULONG blockedCount = 0;
     ULONG routedCount = 0;
     
     while (current < InputDataEnd) {
-        ULONG currentWorkspace = 0;
-        
-        // Get current foreground window workspace
-        // In a real implementation, you'd track which workspace is active
-        // and route/block accordingly
-        
         if (pExt->routeModeEnabled) {
-            // Route mode: filter based on workspace assignment
             if (workspaceId != WORKSPACE_UNASSIGNED) {
-                // Check if the foreground window belongs to this workspace
-                // For now, we route all input if route mode is enabled
                 routedCount++;
             } else {
                 blockedCount++;
             }
         } else {
-            // Normal mode: let all input through
             routedCount++;
         }
         
@@ -131,13 +178,9 @@ VOID KeyboardFilterCallback(
     InterlockedAdd(&pExt->routedInputs, routedCount);
     InterlockedAdd(&pExt->blockedInputs, blockedCount);
     
-    DbgPrint("DualDesk: Keyboard filter - processed=%lu, routed=%lu, blocked=%lu\n", 
-             processedCount, routedCount, blockedCount);
-    
     *InputDataConsumed = processedCount;
 }
 
-// Mouse filter callback
 VOID MouseFilterCallback(
     PDEVICE_OBJECT DeviceObject,
     PMOUSE_INPUT_DATA InputDataStart,
@@ -150,14 +193,42 @@ VOID MouseFilterCallback(
         return;
     }
     
-    // Get the device handle from the filter context
     PFILE_OBJECT fileObject = IoGetCurrentIrpStackLocation(IoGetCurrentIrp(DeviceObject))->FileObject;
     HANDLE deviceHandle = NULL;
     if (fileObject) {
         deviceHandle = (HANDLE)fileObject;
     }
     
-    // Find the workspace for this device
+    // ============================================================
+    // ADD: DUAL MOUSE TRACKING
+    // ============================================================
+    if (pExt->DualMouse.Enabled) {
+        // Track mouse movements for dual cursor
+        PMOUSE_INPUT_DATA current = InputDataStart;
+        ULONG processed = 0;
+        
+        while (current < InputDataEnd) {
+            if (deviceHandle == pExt->DualMouse.Device1Handle) {
+                pExt->DualMouse.Cursor1X += current->LastX;
+                pExt->DualMouse.Cursor1Y += current->LastY;
+                pExt->DualMouse.Device1Assigned = TRUE;
+                pExt->DualMouse.TotalPackets++;
+            } else if (deviceHandle == pExt->DualMouse.Device2Handle) {
+                pExt->DualMouse.Cursor2X += current->LastX;
+                pExt->DualMouse.Cursor2Y += current->LastY;
+                pExt->DualMouse.Device2Assigned = TRUE;
+                pExt->DualMouse.TotalPackets++;
+            }
+            current++;
+            processed++;
+        }
+        *InputDataConsumed = processed;
+        return;
+    }
+    
+    // ============================================================
+    // EXISTING CODE CONTINUES
+    // ============================================================
     ULONG workspaceId = WORKSPACE_UNASSIGNED;
     KeAcquireSpinLock(&pExt->lock, (PKIRQL)NULL);
     
@@ -170,7 +241,6 @@ VOID MouseFilterCallback(
     
     KeReleaseSpinLock(&pExt->lock, (PKIRQL)NULL);
     
-    // Process each input
     PMOUSE_INPUT_DATA current = InputDataStart;
     ULONG processedCount = 0;
     ULONG blockedCount = 0;
@@ -179,8 +249,6 @@ VOID MouseFilterCallback(
     while (current < InputDataEnd) {
         if (pExt->routeModeEnabled) {
             if (workspaceId != WORKSPACE_UNASSIGNED) {
-                // Check if the cursor position is within this workspace's monitor
-                // For now, we route all input if route mode is enabled
                 routedCount++;
             } else {
                 blockedCount++;
@@ -197,24 +265,20 @@ VOID MouseFilterCallback(
     InterlockedAdd(&pExt->routedInputs, routedCount);
     InterlockedAdd(&pExt->blockedInputs, blockedCount);
     
-    DbgPrint("DualDesk: Mouse filter - processed=%lu, routed=%lu, blocked=%lu\n", 
-             processedCount, routedCount, blockedCount);
-    
     *InputDataConsumed = processedCount;
 }
 
 // ============================================================
-// REGISTER FILTERS WITH WINDOWS
+// EXISTING REGISTER FUNCTIONS (Keep as is)
 // ============================================================
-
 NTSTATUS RegisterKeyboardFilter(PDEVICE_EXTENSION pExt) {
+    // ... EXISTING CODE - Keep unchanged ...
     NTSTATUS status;
     UNICODE_STRING filterName;
     WCHAR filterNameBuffer[64];
     
     DbgPrint("DualDesk: Registering keyboard filter...\n");
     
-    // Create a filter device
     RtlStringCbPrintfW(filterNameBuffer, sizeof(filterNameBuffer), 
                        L"\\Device\\DualDeskKeyboardFilter");
     RtlInitUnicodeString(&filterName, filterNameBuffer);
@@ -234,11 +298,9 @@ NTSTATUS RegisterKeyboardFilter(PDEVICE_EXTENSION pExt) {
         return status;
     }
     
-    // Set up filter device
     pExt->keyboardFilterDevice->Flags |= DO_BUFFERED_IO;
     pExt->keyboardFilterDevice->StackSize = 1;
     
-    // Find the keyboard class device
     UNICODE_STRING kbdClassName;
     RtlInitUnicodeString(&kbdClassName, L"\\Device\\KeyboardClass0");
     
@@ -252,7 +314,6 @@ NTSTATUS RegisterKeyboardFilter(PDEVICE_EXTENSION pExt) {
         return status;
     }
     
-    // Attach to the keyboard device stack
     PDEVICE_OBJECT attachedDevice = IoAttachDeviceToDeviceStack(
         pExt->keyboardFilterDevice,
         pExt->keyboardTargetDevice
@@ -266,26 +327,18 @@ NTSTATUS RegisterKeyboardFilter(PDEVICE_EXTENSION pExt) {
         return STATUS_UNSUCCESSFUL;
     }
     
-    // Register the service callback
-    status = IoRegisterDeviceInterface(
-        pExt->keyboardFilterDevice,
-        &GUID_DEVCLASS_KEYBOARD,
-        NULL,
-        NULL
-    );
-    
     DbgPrint("DualDesk: Keyboard filter registered successfully\n");
     return STATUS_SUCCESS;
 }
 
 NTSTATUS RegisterMouseFilter(PDEVICE_EXTENSION pExt) {
+    // ... EXISTING CODE - Keep unchanged ...
     NTSTATUS status;
     UNICODE_STRING filterName;
     WCHAR filterNameBuffer[64];
     
     DbgPrint("DualDesk: Registering mouse filter...\n");
     
-    // Create a filter device
     RtlStringCbPrintfW(filterNameBuffer, sizeof(filterNameBuffer), 
                        L"\\Device\\DualDeskMouseFilter");
     RtlInitUnicodeString(&filterName, filterNameBuffer);
@@ -305,11 +358,9 @@ NTSTATUS RegisterMouseFilter(PDEVICE_EXTENSION pExt) {
         return status;
     }
     
-    // Set up filter device
     pExt->mouseFilterDevice->Flags |= DO_BUFFERED_IO;
     pExt->mouseFilterDevice->StackSize = 1;
     
-    // Find the mouse class device
     UNICODE_STRING mouClassName;
     RtlInitUnicodeString(&mouClassName, L"\\Device\\MouseClass0");
     
@@ -323,7 +374,6 @@ NTSTATUS RegisterMouseFilter(PDEVICE_EXTENSION pExt) {
         return status;
     }
     
-    // Attach to the mouse device stack
     PDEVICE_OBJECT attachedDevice = IoAttachDeviceToDeviceStack(
         pExt->mouseFilterDevice,
         pExt->mouseTargetDevice
@@ -342,9 +392,8 @@ NTSTATUS RegisterMouseFilter(PDEVICE_EXTENSION pExt) {
 }
 
 // ============================================================
-// EXISTING DRIVER FUNCTIONS (Unchanged)
+// EXISTING HELPER FUNCTIONS (Keep as is)
 // ============================================================
-
 ULONG FindDeviceWorkspace(PDEVICE_EXTENSION pExt, HANDLE deviceHandle) {
     if (!pExt) return WORKSPACE_UNASSIGNED;
     
@@ -414,6 +463,9 @@ NTSTATUS RemoveDeviceMapping(PDEVICE_EXTENSION pExt, HANDLE deviceHandle) {
     return STATUS_NOT_FOUND;
 }
 
+// ============================================================
+// DISPATCH FUNCTIONS
+// ============================================================
 NTSTATUS DispatchCreateClose(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     UNREFERENCED_PARAMETER(DeviceObject);
     Irp->IoStatus.Status = STATUS_SUCCESS;
@@ -422,6 +474,9 @@ NTSTATUS DispatchCreateClose(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     return STATUS_SUCCESS;
 }
 
+// ============================================================
+// DISPATCH DEVICE CONTROL - ADD DUAL MOUSE IOCTLS
+// ============================================================
 NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     PIO_STACK_LOCATION pStack = IoGetCurrentIrpStackLocation(Irp);
     ULONG controlCode = pStack->Parameters.DeviceIoControl.IoControlCode;
@@ -432,6 +487,9 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     DbgPrint("DualDesk: IOCTL 0x%X received\n", controlCode);
     
     switch (controlCode) {
+        // ============================================================
+        // EXISTING IOCTLS (Keep as is)
+        // ============================================================
         case IOCTL_DUALDESK_ASSIGN_DEVICE: {
             if (pStack->Parameters.DeviceIoControl.InputBufferLength < sizeof(ULONG) * 3) {
                 status = STATUS_INVALID_PARAMETER;
@@ -525,9 +583,6 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
             output[4] = pExt->filtersRegistered ? 1 : 0;
             
             information = sizeof(ULONG) * 5;
-            
-            DbgPrint("DualDesk: GET_STATUS devices=%lu, routed=%lu, blocked=%lu, total=%lu, filters=%lu\n", 
-                     output[0], output[1], output[2], output[3], output[4]);
             break;
         }
         
@@ -552,6 +607,94 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
             break;
         }
         
+        // ============================================================
+        // ADD: DUAL MOUSE IOCTL HANDLERS
+        // ============================================================
+        case IOCTL_DUALMOUSE_ENABLE: {
+            pExt->DualMouse.Enabled = TRUE;
+            DbgPrint("DualDesk: Dual Mouse ENABLED\n");
+            status = STATUS_SUCCESS;
+            break;
+        }
+        
+        case IOCTL_DUALMOUSE_DISABLE: {
+            pExt->DualMouse.Enabled = FALSE;
+            DbgPrint("DualDesk: Dual Mouse DISABLED\n");
+            status = STATUS_SUCCESS;
+            break;
+        }
+        
+        case IOCTL_DUALMOUSE_SET_COLORS: {
+            if (pStack->Parameters.DeviceIoControl.InputBufferLength < sizeof(DUALMOUSE_COLORS)) {
+                status = STATUS_INVALID_PARAMETER;
+                break;
+            }
+            
+            PDUALMOUSE_COLORS colors = (PDUALMOUSE_COLORS)Irp->AssociatedIrp.SystemBuffer;
+            pExt->DualMouse.Cursor1Color = colors->Color1;
+            pExt->DualMouse.Cursor2Color = colors->Color2;
+            DbgPrint("DualDesk: Dual Mouse colors set: 1=0x%X, 2=0x%X\n", 
+                     colors->Color1, colors->Color2);
+            status = STATUS_SUCCESS;
+            break;
+        }
+        
+        case IOCTL_DUALMOUSE_GET_POSITIONS: {
+            if (pStack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(DUALMOUSE_POSITIONS)) {
+                status = STATUS_BUFFER_TOO_SMALL;
+                break;
+            }
+            
+            PDUALMOUSE_POSITIONS pos = (PDUALMOUSE_POSITIONS)Irp->AssociatedIrp.SystemBuffer;
+            pos->X1 = pExt->DualMouse.Cursor1X;
+            pos->Y1 = pExt->DualMouse.Cursor1Y;
+            pos->X2 = pExt->DualMouse.Cursor2X;
+            pos->Y2 = pExt->DualMouse.Cursor2Y;
+            information = sizeof(DUALMOUSE_POSITIONS);
+            DbgPrint("DualDesk: Dual Mouse positions: (%d,%d) (%d,%d)\n", 
+                     pos->X1, pos->Y1, pos->X2, pos->Y2);
+            status = STATUS_SUCCESS;
+            break;
+        }
+        
+        case IOCTL_DUALMOUSE_SET_DEVICE: {
+            if (pStack->Parameters.DeviceIoControl.InputBufferLength < sizeof(DUALMOUSE_DEVICE_ASSIGN)) {
+                status = STATUS_INVALID_PARAMETER;
+                break;
+            }
+            
+            PDUALMOUSE_DEVICE_ASSIGN assign = (PDUALMOUSE_DEVICE_ASSIGN)Irp->AssociatedIrp.SystemBuffer;
+            if (assign->DeviceNumber == 1) {
+                pExt->DualMouse.Device1Handle = assign->DeviceHandle;
+                pExt->DualMouse.Device1Assigned = TRUE;
+                DbgPrint("DualDesk: Device 1 assigned: %p\n", assign->DeviceHandle);
+            } else if (assign->DeviceNumber == 2) {
+                pExt->DualMouse.Device2Handle = assign->DeviceHandle;
+                pExt->DualMouse.Device2Assigned = TRUE;
+                DbgPrint("DualDesk: Device 2 assigned: %p\n", assign->DeviceHandle);
+            } else {
+                status = STATUS_INVALID_PARAMETER;
+            }
+            break;
+        }
+        
+        case IOCTL_DUALMOUSE_GET_STATUS: {
+            if (pStack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(DUALMOUSE_STATUS)) {
+                status = STATUS_BUFFER_TOO_SMALL;
+                break;
+            }
+            
+            PDUALMOUSE_STATUS dmStatus = (PDUALMOUSE_STATUS)Irp->AssociatedIrp.SystemBuffer;
+            dmStatus->Enabled = pExt->DualMouse.Enabled;
+            dmStatus->TotalPackets = pExt->DualMouse.TotalPackets;
+            dmStatus->RoutedPackets = pExt->DualMouse.RoutedPackets;
+            dmStatus->Device1Active = pExt->DualMouse.Device1Assigned;
+            dmStatus->Device2Active = pExt->DualMouse.Device2Assigned;
+            information = sizeof(DUALMOUSE_STATUS);
+            status = STATUS_SUCCESS;
+            break;
+        }
+        
         default: {
             DbgPrint("DualDesk: Unknown IOCTL 0x%X\n", controlCode);
             status = STATUS_INVALID_DEVICE_REQUEST;
@@ -566,9 +709,8 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
 }
 
 // ============================================================
-// DRIVER UNLOAD - Clean up filters
+// DRIVER UNLOAD
 // ============================================================
-
 VOID DualDeskDriverUnload(PDRIVER_OBJECT DriverObject) {
     UNICODE_STRING dosDeviceName;
     RtlInitUnicodeString(&dosDeviceName, DOS_DEVICE_NAME);
@@ -578,7 +720,6 @@ VOID DualDeskDriverUnload(PDRIVER_OBJECT DriverObject) {
     if (g_pDeviceObject) {
         PDEVICE_EXTENSION pExt = (PDEVICE_EXTENSION)g_pDeviceObject->DeviceExtension;
         
-        // Detach and delete keyboard filter
         if (pExt->keyboardFilterDevice) {
             if (pExt->keyboardTargetDevice) {
                 IoDetachDevice(pExt->keyboardFilterDevice);
@@ -587,7 +728,6 @@ VOID DualDeskDriverUnload(PDRIVER_OBJECT DriverObject) {
             IoDeleteDevice(pExt->keyboardFilterDevice);
         }
         
-        // Detach and delete mouse filter
         if (pExt->mouseFilterDevice) {
             if (pExt->mouseTargetDevice) {
                 IoDetachDevice(pExt->mouseFilterDevice);
@@ -605,9 +745,8 @@ VOID DualDeskDriverUnload(PDRIVER_OBJECT DriverObject) {
 }
 
 // ============================================================
-// DRIVER ENTRY - Register filters on load
+// DRIVER ENTRY
 // ============================================================
-
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) {
     NTSTATUS status;
     PDEVICE_OBJECT deviceObject = NULL;
@@ -638,8 +777,9 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
     
     g_pDeviceObject = deviceObject;
     
-    // Initialize device extension
     pExt = (PDEVICE_EXTENSION)deviceObject->DeviceExtension;
+    RtlZeroMemory(pExt, sizeof(DEVICE_EXTENSION));
+    
     pExt->pDeviceObject = deviceObject;
     pExt->routeModeEnabled = FALSE;
     pExt->filtersRegistered = FALSE;
@@ -654,6 +794,23 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
     pExt->keyboardCallback = NULL;
     pExt->mouseCallback = NULL;
     
+    // ============================================================
+    // ADD: Initialize Dual Mouse context
+    // ============================================================
+    pExt->DualMouse.Enabled = FALSE;
+    pExt->DualMouse.Cursor1X = 500;
+    pExt->DualMouse.Cursor1Y = 300;
+    pExt->DualMouse.Cursor2X = 600;
+    pExt->DualMouse.Cursor2Y = 300;
+    pExt->DualMouse.Cursor1Color = RGB(255, 50, 50);
+    pExt->DualMouse.Cursor2Color = RGB(50, 150, 255);
+    pExt->DualMouse.Device1Handle = NULL;
+    pExt->DualMouse.Device2Handle = NULL;
+    pExt->DualMouse.Device1Assigned = FALSE;
+    pExt->DualMouse.Device2Assigned = FALSE;
+    pExt->DualMouse.TotalPackets = 0;
+    pExt->DualMouse.RoutedPackets = 0;
+    
     KeInitializeSpinLock(&pExt->lock);
     
     for (int i = 0; i < MAX_DEVICES; i++) {
@@ -662,7 +819,6 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
         pExt->deviceTypes[i] = 0;
     }
     
-    // Create symbolic link
     status = IoCreateSymbolicLink(&dosDeviceName, &deviceName);
     if (!NT_SUCCESS(status)) {
         DbgPrint("DualDesk: IoCreateSymbolicLink failed 0x%X\n", status);
@@ -670,7 +826,6 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
         return status;
     }
     
-    // Set dispatch routines
     DriverObject->MajorFunction[IRP_MJ_CREATE] = DispatchCreateClose;
     DriverObject->MajorFunction[IRP_MJ_CLOSE] = DispatchCreateClose;
     DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = DispatchDeviceControl;
@@ -678,7 +833,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
     
     deviceObject->Flags &= ~DO_DEVICE_INITIALIZING;
     
-    // Register filters immediately on driver load
+    // Register filters
     status = RegisterKeyboardFilter(pExt);
     if (NT_SUCCESS(status)) {
         status = RegisterMouseFilter(pExt);

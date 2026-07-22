@@ -44,3 +44,9 @@ if(MSVC)
         COMMENT "Copying spdlog.dll"
     )
 endif()
+
+add_library(DualDeskCore STATIC
+    # ... existing files ...
+    core/src/cursor/virtual_cursor.cpp
+    core/src/cursor/cursor_emulator.cpp
+)

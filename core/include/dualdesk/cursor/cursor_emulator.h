@@ -1,59 +1,36 @@
 #pragma once
 #include <windows.h>
+#include <vector>
+#include <map>
 #include <memory>
-#include "virtual_cursor.h"
 
 namespace dualdesk {
+
+// Forward declaration
+class VirtualCursorManager;
 
 class CursorEmulator {
 public:
     CursorEmulator();
     ~CursorEmulator();
 
-    bool Initialize(HWND overlayWindow);
-    void Shutdown();
-
-    // Enable virtual cursor for a workspace
-    bool EnableVirtualCursor(ULONG workspaceId, ULONG deviceHandle, RECT monitorBounds);
-    bool DisableVirtualCursor(ULONG workspaceId);
-
-    // Route mouse input to the correct cursor
-    void RouteMouseMove(ULONG workspaceId, int deltaX, int deltaY);
-    void RouteMouseButton(ULONG workspaceId, bool leftButton, bool down);
-    void RouteMouseWheel(ULONG workspaceId, int delta);
-
-    // Set which workspace has the real (physical) cursor
+    void Initialize(HWND overlayWnd);
+    void LockRealCursor(bool locked);
     void SetRealCursorWorkspace(ULONG workspaceId);
     ULONG GetRealCursorWorkspace() const;
-
-    // Lock real cursor to its workspace
-    void LockRealCursor(bool enabled);
-    bool IsRealCursorLocked() const;
-
-    // ============================================================
-    // NEW: Border wall methods
-    // ============================================================
+    void EnableVirtualCursor(ULONG workspaceId, ULONG deviceId, const RECT& bounds);
+    void DisableVirtualCursor(ULONG workspaceId);
     void ShowCursorBorder(bool show);
-    void DrawBorder(HDC hdc);
-    void SetBorderColor(COLORREF color);
-    void SetBorderThickness(int thickness);
-
-    // Get virtual cursor manager
+    void RouteMouseMove(ULONG workspaceId, int x, int y);
+    void RouteMouseButton(ULONG workspaceId, bool left, bool right);
+    void RouteMouseWheel(ULONG workspaceId, int delta);
     VirtualCursorManager* GetVirtualCursorManager();
 
 private:
-    std::unique_ptr<VirtualCursorManager> m_virtualCursorManager;
     ULONG m_realCursorWorkspace;
     bool m_cursorLocked;
-    bool m_initialized;
-    bool m_showBorder;
-    COLORREF m_borderColor;
-    int m_borderThickness;
-    CRITICAL_SECTION m_cs;
-
-    void ConstrainRealCursor();
-    bool IsPointInWorkspace(ULONG workspaceId, const POINT& pt);
-    void DrawBorderWall(HDC hdc);
+    bool m_borderVisible;
+    VirtualCursorManager* m_virtualManager;  // Forward declaration works here
 };
 
 } // namespace dualdesk
